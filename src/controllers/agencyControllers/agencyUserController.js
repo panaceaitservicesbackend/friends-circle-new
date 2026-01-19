@@ -9,17 +9,16 @@ const { checkAndMarkAgencyProfileCompleted } = require('../../utils/agencyProfil
 // Agency Registration (Email and Mobile Number) - ONLY ONCE PER USER
 exports.agencyRegister = async (req, res) => {
   const { email, mobileNumber, referralCode } = req.body;
-  const otp = Math.floor(1000 + Math.random() * 9000); // Generate 4-digit OTP
 
   try {
-    // Validate email and mobile number
+    // ---------- VALIDATION ----------
     if (!isValidEmail(email)) {
       return res.status(400).json({
         success: false,
         message: messages.COMMON.INVALID_EMAIL
       });
     }
-    
+
     if (!isValidMobile(mobileNumber)) {
       return res.status(400).json({
         success: false,
@@ -27,188 +26,256 @@ exports.agencyRegister = async (req, res) => {
       });
     }
 
-    // ⚠️ IMPORTANT: Check if agency already exists - NO MULTIPLE SIGNUPS ALLOWED
-    const existingAgency = await AgencyUser.findOne({ $or: [{ email }, { mobileNumber }] });
-    
+    // ---------- CHECK EXISTING ----------
+    const existingAgency = await AgencyUser.findOne({
+      $or: [{ email }, { mobileNumber }]
+    });
+
     if (existingAgency) {
-      // Agency already exists - REJECT signup, redirect to login
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: 'Agency already exists, please login',
         redirectTo: 'LOGIN'
       });
     }
 
-    // Generate unique referral code for new user
-    const generateReferralCode = require('../../utils/generateReferralCode');
-    let myReferral = generateReferralCode();
-    while (await AgencyUser.findOne({ referralCode: myReferral })) {
-      myReferral = generateReferralCode();
-    }
+    // ---------- GENERATE OTP ----------
+    const otp = Math.floor(1000 + Math.random() * 9000);
 
-    // Link referral if provided: can be an AgencyUser code
+    // ---------- REFERRAL ----------
     let referredByAgency = null;
     if (referralCode) {
       referredByAgency = await AgencyUser.findOne({ referralCode });
     }
 
-    // Create new agency with initial state
-    const newAgency = new AgencyUser({ 
-      email, 
-      mobileNumber, 
-      otp, 
-      referralCode: myReferral, 
-      referredByAgency: referredByAgency ? [referredByAgency._id] : [],
-      isVerified: false,      // Will be true after OTP verification
-      isActive: false,        // Will be true after OTP verification
-      profileCompleted: false, // Will be true after profile completion
-      reviewStatus: 'completeProfile' // Initial state
+    // ---------- CREATE USER ----------
+    const newAgency = new AgencyUser({
+      email,
+      mobileNumber,
+      otp,
+      isVerified: false,
+      isActive: false,
+      profileCompleted: false,
+      reviewStatus: 'completeProfile',
+      referredByAgency: referredByAgency ? [referredByAgency._id] : []
     });
+
     await newAgency.save();
-    await sendOtp(email, otp); // Send OTP via SendGrid
+
+    // ---------- SEND OTP ----------
+    const sendWhatsappOtp = require('../../utils/sendWhatsappOtp');
+
+    await Promise.all([
+      sendOtp(email, otp),
+      sendWhatsappOtp(mobileNumber, otp)
+    ]);
 
     res.status(201).json({
       success: true,
-      message: messages.AUTH.OTP_SENT_EMAIL,
-      otp: otp // For testing purposes
+      message: 'OTP sent to Email and WhatsApp',
+      otp // ⚠️ remove in production
     });
+
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
   }
 };
 
+
+
 // Login Agency User (Send OTP) - ALWAYS ALLOWED AFTER OTP VERIFICATION
 exports.agencyLogin = async (req, res) => {
-  const { email } = req.body;
+  const { email, mobileNumber } = req.body;
 
   try {
-    // Validate email
-    if (!isValidEmail(email)) {
+    // ---------- VALIDATION ----------
+    if (!email && !mobileNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email or mobile number is required'
+      });
+    }
+
+    if (email && !isValidEmail(email)) {
       return res.status(400).json({
         success: false,
         message: messages.COMMON.INVALID_EMAIL
       });
     }
 
-    // Check if the agency exists
-    const agency = await AgencyUser.findOne({ email });
+    if (mobileNumber && !isValidMobile(mobileNumber)) {
+      return res.status(400).json({
+        success: false,
+        message: messages.VALIDATION.INVALID_MOBILE
+      });
+    }
+
+    // ---------- FIND USER ----------
+    const agency = await AgencyUser.findOne({
+      $or: [
+        email ? { email } : null,
+        mobileNumber ? { mobileNumber } : null
+      ].filter(Boolean)
+    });
+
     if (!agency) {
-      return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
+      });
     }
 
-    // Check if agency is verified (OTP verified during signup)
     if (!agency.isVerified) {
-      return res.status(400).json({ success: false, message: messages.AUTH.ACCOUNT_NOT_VERIFIED });
+      return res.status(400).json({
+        success: false,
+        message: messages.AUTH.ACCOUNT_NOT_VERIFIED
+      });
     }
 
-    // Generate new OTP for login
+    // ---------- GENERATE OTP ----------
     const otp = Math.floor(1000 + Math.random() * 9000);
     agency.otp = otp;
     await agency.save();
 
-    // Send OTP via email
-    await sendOtp(email, otp);
+    const sendWhatsappOtp = require('../../utils/sendWhatsappOtp');
 
+    let otpChannels = [];
+
+    // ---------- SEND EMAIL OTP ----------
+    if (agency.email && email) {
+      await sendOtp(agency.email, otp);
+      otpChannels.push('email');
+    }
+
+    // ---------- SEND WHATSAPP OTP ----------
+    if (agency.mobileNumber && mobileNumber) {
+      try {
+        await sendWhatsappOtp(agency.mobileNumber, otp);
+        otpChannels.push('mobile');
+      } catch (err) {
+        console.error('WhatsApp OTP failed:', err.message);
+      }
+    }
+
+    // ---------- DYNAMIC MESSAGE ----------
+    let message = messages.AUTH.OTP_SENT_LOGIN;
+
+    if (otpChannels.length === 1 && otpChannels[0] === 'mobile') {
+      message = 'OTP sent to your Mobile number on WhatsApp for login verification.';
+    } else if (otpChannels.length === 1 && otpChannels[0] === 'email') {
+      message = 'OTP sent to your email for login verification.';
+    } else if (otpChannels.length === 2) {
+      message = 'OTP sent to your email and mobile number for login verification.';
+    }
+
+    // ---------- RESPONSE ----------
     res.json({
       success: true,
-      message: messages.AUTH.OTP_SENT_LOGIN,
-      otp: otp // For testing purposes
+      message,
+      ...(process.env.NODE_ENV !== 'production' && { otp })
     });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 // Verify Login OTP - Returns reviewStatus-based response
 exports.agencyVerifyLoginOtp = async (req, res) => {
   const { otp } = req.body;
 
   try {
-    const agency = await AgencyUser.findOne({ otp, isVerified: true });
-    
-    if (agency) {
-      // Clear OTP after successful login
-      agency.otp = undefined;
-      await agency.save();
+    const agency = await AgencyUser.findOne({
+      otp,
+      isVerified: true
+    });
 
-      // Generate JWT token
-      const token = generateToken(agency._id, 'agency');
-
-      // Determine redirect based on reviewStatus
-      let redirectTo = 'COMPLETE_PROFILE'; // default
-      
-      if (agency.reviewStatus === 'completeProfile') {
-        redirectTo = 'COMPLETE_PROFILE';
-      } else if (agency.reviewStatus === 'pending') {
-        redirectTo = 'UNDER_REVIEW';
-      } else if (agency.reviewStatus === 'accepted') {
-        redirectTo = 'DASHBOARD';
-      } else if (agency.reviewStatus === 'rejected') {
-        redirectTo = 'REJECTED';
-      }
-
-      res.json({
-        success: true,
-        message: messages.AUTH.LOGIN_SUCCESS,
-        token,
-        data: {
-          agency: {
-            id: agency._id,
-            firstName: agency.firstName,
-            lastName: agency.lastName,
-            email: agency.email,
-            mobileNumber: agency.mobileNumber,
-            profileCompleted: agency.profileCompleted,
-            reviewStatus: agency.reviewStatus
-          },
-          redirectTo: redirectTo
-        }
+    if (!agency) {
+      return res.status(400).json({
+        success: false,
+        message: messages.COMMON.INVALID_OTP
       });
-    } else {
-      res.status(400).json({ success: false, message: messages.COMMON.INVALID_OTP });
     }
+
+    agency.otp = undefined;
+    await agency.save();
+
+    const token = generateToken(agency._id, 'agency');
+
+    let redirectTo = 'COMPLETE_PROFILE';
+
+    if (agency.reviewStatus === 'pending') redirectTo = 'UNDER_REVIEW';
+    if (agency.reviewStatus === 'accepted') redirectTo = 'DASHBOARD';
+    if (agency.reviewStatus === 'rejected') redirectTo = 'REJECTED';
+
+    res.json({
+      success: true,
+      message: messages.AUTH.LOGIN_SUCCESS,
+      token,
+      data: {
+        agency: {
+          id: agency._id,
+          email: agency.email,
+          mobileNumber: agency.mobileNumber,
+          profileCompleted: agency.profileCompleted,
+          reviewStatus: agency.reviewStatus
+        },
+        redirectTo
+      }
+    });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 // OTP Verification for Registration
 exports.agencyVerifyOtp = async (req, res) => {
   const { otp } = req.body;
 
   try {
-    const agency = await AgencyUser.findOne({ otp, isVerified: false });
+    const agency = await AgencyUser.findOne({
+      otp,
+      isVerified: false
+    });
 
-    if (agency) {
-      const token = generateToken(agency._id, 'agency');
-      
-      // After OTP verification:
-      agency.isVerified = true;  // Mark as verified
-      agency.isActive = true;    // Mark as active
-      agency.otp = undefined;    // Clear OTP
-      agency.status = 'active';  // Set status to active
-      agency.reviewStatus = 'completeProfile'; // Ensure status is completeProfile
-      // profileCompleted remains false until profile is completed
-
-      await agency.save();
-      
-      res.json({ 
-        success: true, 
-        token,
-        message: messages.AUTH.OTP_VERIFIED,
-        data: {
-          profileCompleted: false,
-          reviewStatus: 'completeProfile',
-          redirectTo: 'COMPLETE_PROFILE'
-        }
+    if (!agency) {
+      return res.status(400).json({
+        success: false,
+        message: messages.COMMON.INVALID_OTP
       });
-    } else {
-      res.status(400).json({ success: false, message: messages.COMMON.INVALID_OTP });
     }
+
+    agency.isVerified = true;
+    agency.isActive = true;
+    agency.otp = undefined;
+    agency.reviewStatus = 'completeProfile';
+
+    await agency.save();
+
+    const token = generateToken(agency._id, 'agency');
+
+    res.json({
+      success: true,
+      message: messages.AUTH.OTP_VERIFIED,
+      token,
+      data: {
+        profileCompleted: false,
+        reviewStatus: 'completeProfile',
+        redirectTo: 'COMPLETE_PROFILE'
+      }
+    });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 // Complete agency profile - accepts form-data with details and optional image
 exports.completeAgencyProfile = async (req, res) => {

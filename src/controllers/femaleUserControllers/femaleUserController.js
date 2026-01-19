@@ -1,3 +1,4 @@
+const generateReferralCode = require('../../utils/generateReferralCode');
 const FemaleUser = require('../../models/femaleUser/FemaleUser');
 const MaleUser = require('../../models/maleUser/MaleUser');
 const FemaleBlockList = require('../../models/femaleUser/BlockList');
@@ -378,19 +379,19 @@ exports.updateTravel = async (req, res) => {
 };
 
 // User Registration (Email and Mobile Number) - ONLY ONCE PER USER
-exports.registerUser = async (req, res) => {
-  const { email, mobileNumber, referralCode } = req.body;
-  const otp = Math.floor(1000 + Math.random() * 9000); // Generate 4-digit OTP
+exports.registerFemaleUser = async (req, res) => {
+  const { firstName, lastName, email, mobileNumber, password, referralCode } = req.body;
+  const otp = Math.floor(1000 + Math.random() * 9000);
 
   try {
-    // Validate email and mobile number
+    // ---------- VALIDATION ----------
     if (!isValidEmail(email)) {
       return res.status(400).json({
         success: false,
         message: messages.COMMON.INVALID_EMAIL
       });
     }
-    
+
     if (!isValidMobile(mobileNumber)) {
       return res.status(400).json({
         success: false,
@@ -398,198 +399,236 @@ exports.registerUser = async (req, res) => {
       });
     }
 
-    // ⚠️ IMPORTANT: Check if user already exists - NO MULTIPLE SIGNUPS ALLOWED
-    const existingUser = await FemaleUser.findOne({ $or: [{ email }, { mobileNumber }] });
-    
+    // ---------- CHECK EXISTING ----------
+    const existingUser = await FemaleUser.findOne({
+      $or: [{ email }, { mobileNumber }]
+    });
+
     if (existingUser) {
-      // User already exists - REJECT signup, redirect to login
-      return res.status(400).json({ 
-        success: false, 
-        message: messages.AUTH.USER_ALREADY_EXISTS_LOGIN,
-        redirectTo: 'LOGIN'
-      });
+      if (!existingUser.isVerified) {
+        existingUser.otp = otp;
+        await existingUser.save();
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: messages.AUTH.USER_ALREADY_EXISTS
+        });
+      }
     }
 
-    // Generate unique referral code for new user
-    const generateReferralCode = require('../../utils/generateReferralCode');
+    // ---------- REFERRAL ----------
+    let referredByUser = null;
+    if (referralCode) {
+      referredByUser = await FemaleUser.findOne({ referralCode });
+    }
+
     let myReferral = generateReferralCode();
     while (await FemaleUser.findOne({ referralCode: myReferral })) {
       myReferral = generateReferralCode();
     }
 
-    // Link referral if provided: can be a FemaleUser or AgencyUser code
-    let referredByFemale = null;
-    let referredByAgency = null;
-    if (referralCode) {
-      const FemaleModel = require('../../models/femaleUser/FemaleUser');
-      const AgencyModel = require('../../models/agency/AgencyUser');
-      referredByFemale = await FemaleModel.findOne({ referralCode });
-      if (!referredByFemale) {
-        referredByAgency = await AgencyModel.findOne({ referralCode });
-      }
-    }
+    // ---------- CREATE USER ----------
+    const user =
+      existingUser ||
+      (await FemaleUser.create({
+        firstName,
+        lastName,
+        email,
+        mobileNumber,
+        password,
+        otp,
+        referralCode: myReferral,
+        referredBy: referredByUser ? [referredByUser._id] : [],
+        isVerified: false,
+        isActive: false
+      }));
 
-    // Create new user with initial state
-    const newUser = new FemaleUser({ 
-      email, 
-      mobileNumber, 
-      otp, 
-      referralCode: myReferral, 
-      referredByFemale: referredByFemale ? [referredByFemale._id] : [], 
-      referredByAgency: referredByAgency ? [referredByAgency._id] : [],
-      isVerified: false,      // Will be true after OTP verification
-      isActive: false,        // Will be true after OTP verification
-      profileCompleted: false, // Will be true after profile completion
-      reviewStatus: 'completeProfile' // Initial state
-    });
-    await newUser.save();
-    await sendOtp(email, otp); // Send OTP via SendGrid
+    // ---------- SEND OTP ----------
+    const sendWhatsappOtp = require('../../utils/sendWhatsappOtp');
+
+    await Promise.all([
+      sendOtp(email, otp),
+      sendWhatsappOtp(mobileNumber, otp)
+    ]);
 
     res.status(201).json({
       success: true,
-      message: messages.AUTH.OTP_SENT_EMAIL,
-      otp: otp // For testing purposes
+      message: 'OTP sent to Email and WhatsApp',
+      ...(process.env.NODE_ENV !== 'production' && { otp })
     });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
 
+
 // Login Female User (Send OTP) - ALWAYS ALLOWED AFTER OTP VERIFICATION
-exports.loginUser = async (req, res) => {
-  const { email } = req.body;
+exports.loginFemaleUser = async (req, res) => {
+  const { email, mobileNumber } = req.body;
 
   try {
-    // Validate email
-    if (!isValidEmail(email)) {
+    // ---------- VALIDATION ----------
+    if (!email && !mobileNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email or mobile number is required'
+      });
+    }
+
+    if (email && !isValidEmail(email)) {
       return res.status(400).json({
         success: false,
         message: messages.COMMON.INVALID_EMAIL
       });
     }
 
-    // Check if the user exists
-    const user = await FemaleUser.findOne({ email });
+    if (mobileNumber && !isValidMobile(mobileNumber)) {
+      return res.status(400).json({
+        success: false,
+        message: messages.VALIDATION.INVALID_MOBILE
+      });
+    }
+
+    // ---------- FIND USER ----------
+    const user = await FemaleUser.findOne({
+      $or: [
+        email ? { email } : null,
+        mobileNumber ? { mobileNumber } : null
+      ].filter(Boolean)
+    });
+
     if (!user) {
-      return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
+      });
     }
 
-    // Check if user is verified (OTP verified during signup)
     if (!user.isVerified) {
-      return res.status(400).json({ success: false, message: messages.AUTH.ACCOUNT_NOT_VERIFIED });
-    }
-    
-    // Check if user is active
-    if (user.status === 'inactive') {
-      return res.status(403).json({ success: false, message: messages.AUTH.ACCOUNT_DEACTIVATED });
+      return res.status(400).json({
+        success: false,
+        message: messages.AUTH.ACCOUNT_NOT_VERIFIED
+      });
     }
 
-    // Generate new OTP for login
+    // ---------- GENERATE OTP ----------
     const otp = Math.floor(1000 + Math.random() * 9000);
     user.otp = otp;
     await user.save();
 
-    // Send OTP via email
-    await sendOtp(email, otp);
+    const sendWhatsappOtp = require('../../utils/sendWhatsappOtp');
+    let channels = [];
+
+    if (user.email && email) {
+      await sendOtp(user.email, otp);
+      channels.push('email');
+    }
+
+    if (user.mobileNumber && mobileNumber) {
+      await sendWhatsappOtp(user.mobileNumber, otp);
+      channels.push('mobile');
+    }
+
+    let message = 'OTP sent for login verification.';
+    if (channels.length === 1 && channels[0] === 'mobile') {
+      message = 'OTP sent to your Mobile number on WhatsApp for login verification.';
+    } else if (channels.length === 1 && channels[0] === 'email') {
+      message = 'OTP sent to your email for login verification.';
+    } else if (channels.length === 2) {
+      message = 'OTP sent to your email and mobile number for login verification.';
+    }
 
     res.json({
       success: true,
-      message: messages.AUTH.OTP_SENT_LOGIN,
-      otp: otp // For testing purposes
+      message,
+      ...(process.env.NODE_ENV !== 'production' && { otp })
     });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
+
 
 // Verify Login OTP - Returns reviewStatus-based response
-exports.verifyLoginOtp = async (req, res) => {
+exports.verifyFemaleLoginOtp = async (req, res) => {
   const { otp } = req.body;
 
   try {
-    const user = await FemaleUser.findOne({ otp, isVerified: true });
-    
-    if (user) {
-      // Clear OTP after successful login
-      user.otp = undefined;
-      await user.save();
+    const user = await FemaleUser.findOne({
+      otp,
+      isVerified: true
+    });
 
-      // Generate JWT token
-      const token = generateToken(user._id, 'female');
-
-      // Determine redirect based on reviewStatus
-      let redirectTo = 'COMPLETE_PROFILE'; // default
-      
-      if (user.reviewStatus === 'completeProfile') {
-        redirectTo = 'COMPLETE_PROFILE';
-      } else if (user.reviewStatus === 'pending') {
-        redirectTo = 'UNDER_REVIEW';
-      } else if (user.reviewStatus === 'accepted') {
-        redirectTo = 'DASHBOARD';
-      } else if (user.reviewStatus === 'rejected') {
-        redirectTo = 'REJECTED';
-      }
-
-      res.json({
-        success: true,
-        message: messages.AUTH.LOGIN_SUCCESS,
-        token,
-        data: {
-          user: {
-            id: user._id,
-            name: user.name,
-            email: user.email,
-            mobileNumber: user.mobileNumber,
-            profileCompleted: user.profileCompleted,
-            reviewStatus: user.reviewStatus
-          },
-          redirectTo: redirectTo
-        }
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: messages.COMMON.INVALID_OTP
       });
-    } else {
-      res.status(400).json({ success: false, message: messages.COMMON.INVALID_OTP });
     }
+
+    user.otp = undefined;
+    await user.save();
+
+    const token = generateToken(user._id, 'female');
+
+    res.json({
+      success: true,
+      message: messages.AUTH.LOGIN_SUCCESS,
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        mobileNumber: user.mobileNumber
+      }
+    });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 // OTP Verification for Registration
-exports.verifyOtp = async (req, res) => {
+exports.verifyFemaleOtp = async (req, res) => {
   const { otp } = req.body;
 
   try {
-    const user = await FemaleUser.findOne({ otp, isVerified: false });
+    const user = await FemaleUser.findOne({
+      otp,
+      isVerified: false
+    });
 
-    if (user) {
-      const token = generateToken(user._id, 'female');
-      
-      // After OTP verification:
-      user.isVerified = true;  // Mark as verified
-      user.isActive = true;    // Mark as active
-      user.otp = undefined;    // Clear OTP
-      user.reviewStatus = 'completeProfile'; // Ensure status is completeProfile
-      // profileCompleted remains false until profile is completed
-
-      await user.save();
-      
-      res.json({ 
-        success: true, 
-        token,
-        message: messages.AUTH.OTP_VERIFIED,
-        data: {
-          profileCompleted: false,
-          reviewStatus: 'completeProfile',
-          redirectTo: 'COMPLETE_PROFILE'
-        }
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: messages.COMMON.INVALID_OTP
       });
-    } else {
-      res.status(400).json({ success: false, message: messages.COMMON.INVALID_OTP });
     }
+
+    user.isVerified = true;
+    user.isActive = true;
+    user.otp = undefined;
+    await user.save();
+
+    const token = generateToken(user._id, 'female');
+
+    res.json({
+      success: true,
+      message: messages.AUTH.OTP_VERIFIED,
+      token,
+      data: {
+        redirectTo: 'COMPLETE_PROFILE'
+      }
+    });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 // Add Extra Information (Name, Age, Gender, etc.)
 exports.addUserInfo = async (req, res) => {

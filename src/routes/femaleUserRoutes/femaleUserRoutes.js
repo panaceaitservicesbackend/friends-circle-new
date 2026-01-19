@@ -33,16 +33,16 @@ router.get('/options', getFemaleUserOptions);
 // ────────────────────────────────────────────────────────────────
 
 // Registration and OTP
-router.post('/register', femaleUserController.registerUser);
+router.post('/register', femaleUserController.registerFemaleUser);
 
 // Login Female User (Send OTP)
-router.post('/login', femaleUserController.loginUser);
+router.post('/login', femaleUserController.loginFemaleUser);
 
 // Verify OTP (Registration)
-router.post('/verify-otp', femaleUserController.verifyOtp);
+router.post('/verify-otp', femaleUserController.verifyFemaleOtp);
 
 // Verify Login OTP
-router.post('/verify-login-otp', femaleUserController.verifyLoginOtp);
+router.post('/verify-login-otp', femaleUserController.verifyFemaleLoginOtp);
 
 // ────────────────────────────────────────────────────────────────
 // PROFILE COMPLETION ROUTES (Auth required, reviewStatus = 'completeProfile')
