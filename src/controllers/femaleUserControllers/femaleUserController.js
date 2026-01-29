@@ -10,54 +10,58 @@ const AdminConfig = require('../../models/admin/AdminConfig');
 const WithdrawalRequest = require('../../models/common/WithdrawalRequest');
 const { isValidEmail, isValidMobile } = require('../../validations/validations');
 const messages = require('../../validations/messages');
+const sendSmsOtp = require('../../utils/sendSmsOtp');
+
+const formatMobile = require('../../utils/formatMobile');
+
 
 // Helper function to award referral bonuses
 const awardReferralBonus = async (user, adminConfig) => {
   if (!user || !adminConfig || user.referralBonusAwarded) {
     return false; // No user, no config, or bonus already awarded
   }
-  
+
   const Transaction = require('../../models/common/Transaction');
-  
+
   try {
     // Determine referral bonus amount based on referral source
     let referralBonusAmount;
     let referrer;
-    
+
     if (user.referredByFemale) {
       // Female user referred by another female user
       referralBonusAmount = adminConfig.femaleReferralBonus || 100;
       const FemaleModel = require('../../models/femaleUser/FemaleUser');
       referrer = await FemaleModel.findById(user.referredByFemale);
-      
+
       if (referrer) {
         // Add referral bonus to both referrer and referred user's wallet balance
         referrer.walletBalance = (referrer.walletBalance || 0) + referralBonusAmount;
         user.walletBalance = (user.walletBalance || 0) + referralBonusAmount;
         await referrer.save();
-        
+
         // Create transaction for referrer
-        await Transaction.create({ 
-          userType: 'female', 
-          userId: referrer._id, 
-          operationType: 'wallet', 
-          action: 'credit', 
-          amount: referralBonusAmount, 
-          message: `Referral bonus for inviting ${user.email}`, 
-          balanceAfter: referrer.walletBalance, 
-          createdBy: referrer._id 
+        await Transaction.create({
+          userType: 'female',
+          userId: referrer._id,
+          operationType: 'wallet',
+          action: 'credit',
+          amount: referralBonusAmount,
+          message: `Referral bonus for inviting ${user.email}`,
+          balanceAfter: referrer.walletBalance,
+          createdBy: referrer._id
         });
-        
+
         // Create transaction for referred user
-        await Transaction.create({ 
-          userType: 'female', 
-          userId: user._id, 
-          operationType: 'wallet', 
-          action: 'credit', 
-          amount: referralBonusAmount, 
-          message: `Referral signup bonus using referral code`, 
-          balanceAfter: user.walletBalance, 
-          createdBy: user._id 
+        await Transaction.create({
+          userType: 'female',
+          userId: user._id,
+          operationType: 'wallet',
+          action: 'credit',
+          amount: referralBonusAmount,
+          message: `Referral signup bonus using referral code`,
+          balanceAfter: user.walletBalance,
+          createdBy: user._id
         });
       }
     } else if (user.referredByAgency) {
@@ -65,46 +69,46 @@ const awardReferralBonus = async (user, adminConfig) => {
       referralBonusAmount = adminConfig.agencyReferralBonus || 100;
       const AgencyModel = require('../../models/agency/AgencyUser');
       referrer = await AgencyModel.findById(user.referredByAgency);
-      
+
       if (referrer) {
         // Add referral bonus to both agency and referred user's wallet balance
         referrer.walletBalance = (referrer.walletBalance || 0) + referralBonusAmount;
         user.walletBalance = (user.walletBalance || 0) + referralBonusAmount;
         await referrer.save();
-        
+
         // Create transaction for agency
-        await Transaction.create({ 
-          userType: 'agency', 
-          userId: referrer._id, 
-          operationType: 'wallet', 
-          action: 'credit', 
-          amount: referralBonusAmount, 
-          message: `Agency referral bonus for inviting ${user.email}`, 
-          balanceAfter: referrer.walletBalance, 
-          createdBy: referrer._id 
+        await Transaction.create({
+          userType: 'agency',
+          userId: referrer._id,
+          operationType: 'wallet',
+          action: 'credit',
+          amount: referralBonusAmount,
+          message: `Agency referral bonus for inviting ${user.email}`,
+          balanceAfter: referrer.walletBalance,
+          createdBy: referrer._id
         });
-        
+
         // Create transaction for referred user
-        await Transaction.create({ 
-          userType: 'female', 
-          userId: user._id, 
-          operationType: 'wallet', 
-          action: 'credit', 
-          amount: referralBonusAmount, 
-          message: `Referral signup bonus via agency`, 
-          balanceAfter: user.walletBalance, 
-          createdBy: user._id 
+        await Transaction.create({
+          userType: 'female',
+          userId: user._id,
+          operationType: 'wallet',
+          action: 'credit',
+          amount: referralBonusAmount,
+          message: `Referral signup bonus via agency`,
+          balanceAfter: user.walletBalance,
+          createdBy: user._id
         });
       }
     } else {
       // No referral - return early
       return false;
     }
-    
+
     // Mark referral bonus as awarded
     user.referralBonusAwarded = true;
     await user.save();
-    
+
     return true; // Successfully awarded referral bonus
   } catch (error) {
     console.error('Error awarding referral bonus:', error);
@@ -384,22 +388,16 @@ exports.registerFemaleUser = async (req, res) => {
   const otp = Math.floor(1000 + Math.random() * 9000);
 
   try {
-    // ---------- VALIDATION ----------
     if (!isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        message: messages.COMMON.INVALID_EMAIL
-      });
+      return res.status(400).json({ success: false, message: messages.COMMON.INVALID_EMAIL });
     }
 
     if (!isValidMobile(mobileNumber)) {
-      return res.status(400).json({
-        success: false,
-        message: messages.VALIDATION.INVALID_MOBILE
-      });
+      return res.status(400).json({ success: false, message: messages.VALIDATION.INVALID_MOBILE });
     }
 
-    // ---------- CHECK EXISTING ----------
+    const formattedMobile = formatMobile(mobileNumber);
+
     const existingUser = await FemaleUser.findOne({
       $or: [{ email }, { mobileNumber }]
     });
@@ -409,14 +407,10 @@ exports.registerFemaleUser = async (req, res) => {
         existingUser.otp = otp;
         await existingUser.save();
       } else {
-        return res.status(400).json({
-          success: false,
-          message: messages.AUTH.USER_ALREADY_EXISTS
-        });
+        return res.status(400).json({ success: false, message: messages.AUTH.USER_ALREADY_EXISTS });
       }
     }
 
-    // ---------- REFERRAL ----------
     let referredByUser = null;
     if (referralCode) {
       referredByUser = await FemaleUser.findOne({ referralCode });
@@ -427,7 +421,6 @@ exports.registerFemaleUser = async (req, res) => {
       myReferral = generateReferralCode();
     }
 
-    // ---------- CREATE USER ----------
     const user =
       existingUser ||
       (await FemaleUser.create({
@@ -443,17 +436,15 @@ exports.registerFemaleUser = async (req, res) => {
         isActive: false
       }));
 
-    // ---------- SEND OTP ----------
-    const sendWhatsappOtp = require('../../utils/sendWhatsappOtp');
-
+    // ✅ SEND OTP TO BOTH
     await Promise.all([
-      sendOtp(email, otp),
-      sendWhatsappOtp(mobileNumber, otp)
+      sendOtp(email, otp),                  // Email
+      sendSmsOtp(formattedMobile, otp)     // SMS (formatted)
     ]);
 
     res.status(201).json({
       success: true,
-      message: 'OTP sent to Email and WhatsApp',
+      message: 'OTP sent to Email and Mobile',
       ...(process.env.NODE_ENV !== 'production' && { otp })
     });
 
@@ -463,12 +454,13 @@ exports.registerFemaleUser = async (req, res) => {
 };
 
 
-// Login Female User (Send OTP) - ALWAYS ALLOWED AFTER OTP VERIFICATION
+
+
+// Login Female User (Send OTP)
 exports.loginFemaleUser = async (req, res) => {
   const { email, mobileNumber } = req.body;
 
   try {
-    // ---------- VALIDATION ----------
     if (!email && !mobileNumber) {
       return res.status(400).json({
         success: false,
@@ -490,7 +482,6 @@ exports.loginFemaleUser = async (req, res) => {
       });
     }
 
-    // ---------- FIND USER ----------
     const user = await FemaleUser.findOne({
       $or: [
         email ? { email } : null,
@@ -512,31 +503,30 @@ exports.loginFemaleUser = async (req, res) => {
       });
     }
 
-    // ---------- GENERATE OTP ----------
     const otp = Math.floor(1000 + Math.random() * 9000);
     user.otp = otp;
     await user.save();
 
-    const sendWhatsappOtp = require('../../utils/sendWhatsappOtp');
     let channels = [];
 
-    if (user.email && email) {
-      await sendOtp(user.email, otp);
+    if (email && user.email === email) {
+      await sendOtp(email, otp);
       channels.push('email');
     }
 
-    if (user.mobileNumber && mobileNumber) {
-      await sendWhatsappOtp(user.mobileNumber, otp);
+    if (mobileNumber && user.mobileNumber === mobileNumber) {
+      const formattedMobile = formatMobile(mobileNumber);
+      await sendSmsOtp(formattedMobile, otp);
       channels.push('mobile');
     }
 
-    let message = 'OTP sent for login verification.';
-    if (channels.length === 1 && channels[0] === 'mobile') {
-      message = 'OTP sent to your Mobile number on WhatsApp for login verification.';
-    } else if (channels.length === 1 && channels[0] === 'email') {
-      message = 'OTP sent to your email for login verification.';
+    let message = 'OTP sent.';
+    if (channels.length === 1 && channels[0] === 'email') {
+      message = 'OTP sent to your Email.';
+    } else if (channels.length === 1 && channels[0] === 'mobile') {
+      message = 'OTP sent to your Mobile number.';
     } else if (channels.length === 2) {
-      message = 'OTP sent to your email and mobile number for login verification.';
+      message = 'OTP sent to your Email and Mobile.';
     }
 
     res.json({
@@ -552,14 +542,24 @@ exports.loginFemaleUser = async (req, res) => {
 
 
 
+
+
+
+
 // Verify Login OTP - Returns reviewStatus-based response
+const { evaluateScoreRules } = require('../../services/scoreEvaluationService');
+
 exports.verifyFemaleLoginOtp = async (req, res) => {
-  const { otp } = req.body;
+  const { email, mobileNumber, otp } = req.body;
 
   try {
     const user = await FemaleUser.findOne({
       otp,
-      isVerified: true
+      isVerified: true,
+      $or: [
+        email ? { email } : null,
+        mobileNumber ? { mobileNumber } : null
+      ].filter(Boolean)
     });
 
     if (!user) {
@@ -591,13 +591,20 @@ exports.verifyFemaleLoginOtp = async (req, res) => {
 };
 
 
+
+
+
 // OTP Verification for Registration
 exports.verifyFemaleOtp = async (req, res) => {
-  const { otp } = req.body;
+  const { email, mobileNumber, otp } = req.body;
 
   try {
     const user = await FemaleUser.findOne({
       otp,
+      $or: [
+        email ? { email } : null,
+        mobileNumber ? { mobileNumber } : null
+      ].filter(Boolean),
       isVerified: false
     });
 
@@ -619,15 +626,14 @@ exports.verifyFemaleOtp = async (req, res) => {
       success: true,
       message: messages.AUTH.OTP_VERIFIED,
       token,
-      data: {
-        redirectTo: 'COMPLETE_PROFILE'
-      }
+      data: { redirectTo: 'COMPLETE_PROFILE' }
     });
 
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 
 // Add Extra Information (Name, Age, Gender, etc.)
@@ -659,22 +665,22 @@ exports.addUserInfo = async (req, res) => {
 exports.completeUserProfile = async (req, res) => {
   try {
     const userId = req.user._id;
-    
+
     // Early validation for required fields to prevent hanging requests
     if (!req.body.name || !req.body.age || !req.body.gender || !req.body.bio) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: messages.REGISTRATION.PROFILE_REQUIRED_FIELDS
       });
     }
-    
+
     // Helper function to parse string values that might be JSON-encoded
     const parseValue = (value) => {
       if (typeof value === 'string') {
         // Remove quotes if present
         const trimmed = value.trim();
-        if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || 
-            (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+          (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
           return trimmed.slice(1, -1);
         }
         // Try to parse as JSON array/object
@@ -689,7 +695,7 @@ exports.completeUserProfile = async (req, res) => {
       }
       return value;
     };
-    
+
     // Safe array parsing function to prevent crashes
     const safeParseArray = (value) => {
       if (!value) return [];
@@ -708,7 +714,7 @@ exports.completeUserProfile = async (req, res) => {
 
       return [];
     };
-    
+
     // Parse and sanitize incoming data
     const name = parseValue(req.body.name);
     const age = parseValue(req.body.age);
@@ -721,7 +727,7 @@ exports.completeUserProfile = async (req, res) => {
     const film = safeParseArray(req.body.film);
     const music = safeParseArray(req.body.music);
     const travel = safeParseArray(req.body.travel);
-    
+
     // Comprehensive debug logging
     console.log('=== COMPLETE PROFILE DEBUG ===');
     console.log('REQ OBJECT EXISTS:', typeof req);
@@ -735,7 +741,7 @@ exports.completeUserProfile = async (req, res) => {
     console.log('RAW LANGUAGES:', req.body.languages, 'TYPE:', typeof req.body.languages);
     console.log('PARSED LANGUAGES:', languages, 'TYPE:', typeof languages, 'IS_ARRAY:', Array.isArray(languages));
     console.log('=============================');
-    
+
     // Find the user with timeout handling
     let user;
     try {
@@ -743,25 +749,25 @@ exports.completeUserProfile = async (req, res) => {
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Database operation timeout')), 10000); // 10 second timeout
       });
-      
+
       const userPromise = FemaleUser.findById(userId);
       user = await Promise.race([userPromise, timeoutPromise]);
-      
+
       if (!user) {
         return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
       }
 
       // Check if profile is already completed
       if (user.profileCompleted) {
-        return res.status(400).json({ 
-          success: false, 
+        return res.status(400).json({
+          success: false,
           message: messages.REGISTRATION.PROFILE_COMPLETED
         });
       }
     } catch (dbErr) {
       console.error('Database error in completeUserProfile:', dbErr);
-      return res.status(500).json({ 
-        success: false, 
+      return res.status(500).json({
+        success: false,
         error: 'Database operation timed out or failed',
         message: 'Unable to process profile completion, please try again later.'
       });
@@ -769,8 +775,8 @@ exports.completeUserProfile = async (req, res) => {
 
     // Validate required fields for profile completion
     if (!name || !age || !gender || !bio) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: messages.REGISTRATION.PROFILE_REQUIRED_FIELDS
       });
     }
@@ -784,7 +790,7 @@ exports.completeUserProfile = async (req, res) => {
       req.files && Array.isArray(req.files.video)
         ? req.files.video[0]
         : null;
-    
+
     // Check if images provided (either in request or already uploaded)
     const hasImages = uploadedImages.length > 0 || (user.images && user.images.length > 0);
     // Temporarily comment out for debug - uncomment when multer works
@@ -812,7 +818,7 @@ exports.completeUserProfile = async (req, res) => {
       const currentCount = Array.isArray(user.images) ? user.images.length : 0;
       const remainingSlots = Math.max(0, 5 - currentCount);
       const filesToProcess = uploadedImages.slice(0, remainingSlots);
-      
+
       const uploadToCloudinary = require('../../utils/cloudinaryUpload');
       const createdImageIds = [];
       for (const f of filesToProcess) {
@@ -828,7 +834,7 @@ exports.completeUserProfile = async (req, res) => {
           return res.status(500).json({ success: false, message: 'Failed to upload image to Cloudinary', error: uploadErr.message });
         }
       }
-      
+
       user.images = [...(user.images || []), ...createdImageIds];
     }
 
@@ -849,7 +855,7 @@ exports.completeUserProfile = async (req, res) => {
     user.age = Number(age);
     user.gender = gender;
     user.bio = bio;
-    
+
     // Arrays - only update if provided and validate ObjectIds
     if (interests && Array.isArray(interests) && interests.length > 0) {
       console.log('✅ Setting interests:', interests);
@@ -867,7 +873,7 @@ exports.completeUserProfile = async (req, res) => {
     } else {
       console.log('❌ Not setting interests. Value:', interests, 'IsArray:', Array.isArray(interests), 'Length:', interests?.length);
     }
-    
+
     if (languages && Array.isArray(languages) && languages.length > 0) {
       console.log('✅ Setting languages:', languages);
       try {
@@ -884,10 +890,10 @@ exports.completeUserProfile = async (req, res) => {
     } else {
       console.log('❌ Not setting languages. Value:', languages, 'IsArray:', Array.isArray(languages), 'Length:', languages?.length);
     }
-    
+
     // Import crypto once at the top to avoid repeated imports
     const crypto = require('crypto');
-    
+
     if (hobbies && Array.isArray(hobbies) && hobbies.length > 0) {
       user.hobbies = hobbies.map(item => {
         if (typeof item === 'object' && item.id && item.name) {
@@ -938,9 +944,9 @@ exports.completeUserProfile = async (req, res) => {
         return { id, name };
       });
     }
-    
+
     console.log('📝 User before save - interests:', user.interests, 'languages:', user.languages);
-    
+
     // 🔑 KEY STATE CHANGES:
     user.profileCompleted = true;      // Profile is now complete
     user.reviewStatus = 'pending';     // Set to pending for admin review
@@ -951,19 +957,19 @@ exports.completeUserProfile = async (req, res) => {
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Save operation timeout')), 15000); // 15 second timeout
       });
-      
+
       await Promise.race([savePromise, timeoutPromise]);
     } catch (saveErr) {
       console.error('Error saving user:', saveErr);
-      return res.status(500).json({ 
-        success: false, 
+      return res.status(500).json({
+        success: false,
         error: 'Save operation failed or timed out',
         message: 'Unable to save profile completion, please try again later.'
       });
     }
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: messages.REGISTRATION.PROFILE_COMPLETED_SUCCESS,
       data: {
         profileCompleted: true,
@@ -984,36 +990,36 @@ const cleanUpUserReferences = async (userId) => {
     const FemaleUser = require('../../models/femaleUser/FemaleUser');
     const Interest = require('../../models/admin/Interest');
     const Language = require('../../models/admin/Language');
-    
+
     const user = await FemaleUser.findById(userId);
     if (!user) return null;
-    
+
     let updateNeeded = false;
     let updatedInterests = [];
     let updatedLanguages = [];
-    
+
     // Check and clean up interests
     if (user.interests && user.interests.length > 0) {
-      const validInterests = await Interest.find({ 
-        _id: { $in: user.interests } 
+      const validInterests = await Interest.find({
+        _id: { $in: user.interests }
       });
       updatedInterests = validInterests.map(i => i._id);
       if (updatedInterests.length !== user.interests.length) {
         updateNeeded = true;
       }
     }
-    
+
     // Check and clean up languages
     if (user.languages && user.languages.length > 0) {
-      const validLanguages = await Language.find({ 
-        _id: { $in: user.languages } 
+      const validLanguages = await Language.find({
+        _id: { $in: user.languages }
       });
       updatedLanguages = validLanguages.map(l => l._id);
       if (updatedLanguages.length !== user.languages.length) {
         updateNeeded = true;
       }
     }
-    
+
     // Update user if there are invalid references
     if (updateNeeded) {
       await FemaleUser.findByIdAndUpdate(userId, {
@@ -1022,7 +1028,7 @@ const cleanUpUserReferences = async (userId) => {
       });
       console.log(`Cleaned up references for user ${userId}`);
     }
-    
+
     return {
       originalInterestsCount: user.interests ? user.interests.length : 0,
       validInterestsCount: updatedInterests.length,
@@ -1041,7 +1047,7 @@ exports.getUserProfile = async (req, res) => {
   try {
     // Clean up invalid references first
     await cleanUpUserReferences(req.user.id);
-    
+
     const user = await FemaleUser.findById(req.user.id)
       .select('-otp')
       .populate({
@@ -1060,7 +1066,7 @@ exports.getUserProfile = async (req, res) => {
         path: 'favourites',
         select: 'firstName lastName email'
       });
-      
+
     if (!user) {
       return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
     }
@@ -1084,8 +1090,8 @@ exports.updateUserInfo = async (req, res) => {
       if (typeof value === 'string') {
         // Remove surrounding quotes if present
         const trimmed = value.trim();
-        if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || 
-            (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+          (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
           return trimmed.slice(1, -1);
         }
         // Try to parse as JSON array/object
@@ -1125,7 +1131,7 @@ exports.updateUserInfo = async (req, res) => {
     if (gender) user.gender = gender;
     if (bio) user.bio = bio;
     if (videoUrl) user.videoUrl = videoUrl;
-    
+
     // Update interests if provided and validate
     if (interests) {
       const Interest = require('../../models/admin/Interest');
@@ -1133,7 +1139,7 @@ exports.updateUserInfo = async (req, res) => {
       const validInterests = await Interest.find({ _id: { $in: interestArray } });
       user.interests = validInterests.map(i => i._id);
     }
-    
+
     // Update languages if provided and validate
     if (languages) {
       const Language = require('../../models/admin/Language');
@@ -1141,22 +1147,22 @@ exports.updateUserInfo = async (req, res) => {
       const validLanguages = await Language.find({ _id: { $in: languageArray } });
       user.languages = validLanguages.map(l => l._id);
     }
-    
+
     // Helper to process preference arrays
     const processPreferenceArray = (items, fieldName) => {
       if (!items || !Array.isArray(items) || items.length === 0) return null;
-      
+
       console.log(`Processing ${fieldName}:`, items);
-      
+
       try {
         const processed = items.map((item, index) => {
           console.log(`  Item ${index}:`, item, 'Type:', typeof item);
-          
+
           if (!item) {
             console.log(`  Skipping null/undefined item at index ${index}`);
             return null;
           }
-          
+
           if (typeof item === 'object' && item !== null) {
             if (item.id && item.name) {
               return { id: item.id, name: item.name };
@@ -1164,13 +1170,13 @@ exports.updateUserInfo = async (req, res) => {
             console.warn(`  Item ${index} missing id or name:`, item);
             return null;
           }
-          
+
           // Handle string or primitive
           const id = require('crypto').randomBytes(8).toString('hex');
           const name = String(item);
           return { id, name };
         }).filter(Boolean);
-        
+
         console.log(`  Processed ${fieldName}:`, processed);
         return processed;
       } catch (err) {
@@ -1178,7 +1184,7 @@ exports.updateUserInfo = async (req, res) => {
         throw err;
       }
     };
-    
+
     // Update preferences - APPEND new items to existing arrays
     if (hobbies) {
       const newHobbies = processPreferenceArray(hobbies, 'hobbies');
@@ -1188,7 +1194,7 @@ exports.updateUserInfo = async (req, res) => {
         user.hobbies = [...(user.hobbies || []), ...uniqueNew];
       }
     }
-    
+
     if (sports) {
       const newSports = processPreferenceArray(sports, 'sports');
       if (newSports && newSports.length > 0) {
@@ -1197,7 +1203,7 @@ exports.updateUserInfo = async (req, res) => {
         user.sports = [...(user.sports || []), ...uniqueNew];
       }
     }
-    
+
     if (film) {
       const newFilm = processPreferenceArray(film, 'film');
       if (newFilm && newFilm.length > 0) {
@@ -1206,7 +1212,7 @@ exports.updateUserInfo = async (req, res) => {
         user.film = [...(user.film || []), ...uniqueNew];
       }
     }
-    
+
     if (music) {
       const newMusic = processPreferenceArray(music, 'music');
       if (newMusic && newMusic.length > 0) {
@@ -1215,7 +1221,7 @@ exports.updateUserInfo = async (req, res) => {
         user.music = [...(user.music || []), ...uniqueNew];
       }
     }
-    
+
     if (travel) {
       const newTravel = processPreferenceArray(travel, 'travel');
       if (newTravel && newTravel.length > 0) {
@@ -1224,7 +1230,7 @@ exports.updateUserInfo = async (req, res) => {
         user.travel = [...(user.travel || []), ...uniqueNew];
       }
     }
-    
+
     // Update coinsPerMinute if provided and validate
     if (coinsPerMinute !== undefined) {
       const rate = Number(coinsPerMinute);
@@ -1232,20 +1238,20 @@ exports.updateUserInfo = async (req, res) => {
         user.coinsPerMinute = rate;
       }
     }
-    
 
-    
+
+
     await user.save();
-    
+
     // Return updated user with populated fields
     const updatedUser = await FemaleUser.findById(user._id)
       .populate('interests', 'title')
       .populate('languages', 'title');
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Profile updated successfully',
-      data: updatedUser 
+      data: updatedUser
     });
   } catch (err) {
     console.error('❌ Error in updateUserInfo:', err);
@@ -1270,10 +1276,10 @@ exports.getBalanceInfo = async (req, res) => {
     if (!user) {
       return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
     }
-    
+
     // Get admin config for conversion rate
     const adminConfig = await AdminConfig.getConfig();
-    
+
     // Validate required financial settings are configured
     if (adminConfig.coinToRupeeConversionRate === undefined || adminConfig.coinToRupeeConversionRate === null) {
       return res.status(400).json({
@@ -1281,15 +1287,15 @@ exports.getBalanceInfo = async (req, res) => {
         message: 'Coin to rupee conversion rate not configured by admin'
       });
     }
-    
+
     const coinToRupeeRate = adminConfig.coinToRupeeConversionRate;
-    
+
     const walletBalance = user.walletBalance || 0;
     const coinBalance = user.coinBalance || 0;
-    
+
     const walletBalanceInRupees = Number((walletBalance / coinToRupeeRate).toFixed(2));
     const coinBalanceInRupees = Number((coinBalance / coinToRupeeRate).toFixed(2));
-    
+
     return res.json({
       success: true,
       data: {
@@ -1314,11 +1320,11 @@ exports.getBalanceInfo = async (req, res) => {
 // Get withdrawal history for female user
 exports.getWithdrawalHistory = async (req, res) => {
   try {
-    const requests = await WithdrawalRequest.find({ 
-      userType: 'female', 
-      userId: req.user.id 
+    const requests = await WithdrawalRequest.find({
+      userType: 'female',
+      userId: req.user.id
     }).sort({ createdAt: -1 });
-    
+
     return res.json({ success: true, data: requests });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -1339,17 +1345,17 @@ exports.uploadImage = async (req, res) => {
 
     const currentCount = Array.isArray(user.images) ? user.images.length : 0;
     const remainingSlots = Math.max(0, 5 - currentCount);
-    
+
     if (remainingSlots === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: messages.REGISTRATION.IMAGE_LIMIT_REACHED 
+      return res.status(400).json({
+        success: false,
+        message: messages.REGISTRATION.IMAGE_LIMIT_REACHED
       });
     }
 
     const filesToProcess = req.files.slice(0, remainingSlots);
     const skipped = req.files.length - filesToProcess.length;
-     
+
     const uploadToCloudinary = require('../../utils/cloudinaryUpload');
     const createdImageIds = [];
     for (const f of filesToProcess) {
@@ -1357,9 +1363,9 @@ exports.uploadImage = async (req, res) => {
         const result = await uploadToCloudinary(f.buffer, 'admin_uploads', 'image');
         const imageUrl = result.secure_url;
         if (imageUrl) {
-          const newImage = await FemaleImage.create({ 
-            femaleUserId: req.user.id, 
-            imageUrl: imageUrl 
+          const newImage = await FemaleImage.create({
+            femaleUserId: req.user.id,
+            imageUrl: imageUrl
           });
           createdImageIds.push(newImage._id);
         }
@@ -1375,11 +1381,11 @@ exports.uploadImage = async (req, res) => {
     // Populate and return
     const updatedUser = await FemaleUser.findById(user._id).populate('images');
 
-    return res.json({ 
-      success: true, 
-      message: messages.IMAGE.IMAGE_UPLOAD_SUCCESS, 
+    return res.json({
+      success: true,
+      message: messages.IMAGE.IMAGE_UPLOAD_SUCCESS,
       data: {
-        added: createdImageIds.length, 
+        added: createdImageIds.length,
         skipped: skipped,
         totalImages: updatedUser.images.length,
         images: updatedUser.images
@@ -1394,14 +1400,14 @@ exports.uploadImage = async (req, res) => {
 exports.uploadVideo = async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: messages.NOTIFICATION.NO_VIDEO_UPLOADED 
+      return res.status(400).json({
+        success: false,
+        message: messages.NOTIFICATION.NO_VIDEO_UPLOADED
       });
     }
 
     const uploadToCloudinary = require('../../utils/cloudinaryUpload');
-    
+
     let result;
     try {
       result = await uploadToCloudinary(req.file.buffer, 'female_videos', 'video');
@@ -1409,29 +1415,29 @@ exports.uploadVideo = async (req, res) => {
       console.error('Video upload error:', uploadErr);
       return res.status(500).json({ success: false, message: 'Failed to upload video to Cloudinary', error: uploadErr.message });
     }
-    
+
     const videoUrl = result.secure_url;
     const publicId = result.public_id;
     const resourceType = result.resource_type || 'video';
     const duration = result.duration;
     const bytes = result.bytes;
-    
+
     const user = await FemaleUser.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: messages.COMMON.USER_NOT_FOUND 
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     // Store old video URL for potential cleanup
     const oldVideoUrl = user.videoUrl;
-    
+
     // Update with new video
     user.videoUrl = videoUrl;
     await user.save();
 
-    res.json({ 
+    res.json({
       success: true,
       message: messages.NOTIFICATION.VIDEO_UPLOADED_SUCCESS,
       data: {
@@ -1456,31 +1462,31 @@ exports.deleteImage = async (req, res) => {
 
     const imageDoc = await FemaleImage.findById(imageId);
     if (!imageDoc) {
-      return res.status(404).json({ 
-        success: false, 
-        message: messages.USER.IMAGE_NOT_FOUND 
+      return res.status(404).json({
+        success: false,
+        message: messages.USER.IMAGE_NOT_FOUND
       });
     }
-    
+
     if (String(imageDoc.femaleUserId) !== String(req.user.id)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: messages.USER.NOT_AUTHORIZED_DELETE_IMAGE 
+      return res.status(403).json({
+        success: false,
+        message: messages.USER.NOT_AUTHORIZED_DELETE_IMAGE
       });
     }
 
     // Remove ref from user.images and delete image document
     await FemaleUser.updateOne(
-      { _id: req.user.id }, 
+      { _id: req.user.id },
       { $pull: { images: imageDoc._id } }
     );
     await FemaleImage.deleteOne({ _id: imageDoc._id });
-    
+
     // Get updated user with remaining images
     const user = await FemaleUser.findById(req.user.id).populate('images');
 
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       message: messages.IMAGE.IMAGE_DELETED,
       data: {
         deletedImageId: imageId,
@@ -1498,28 +1504,28 @@ exports.deleteVideo = async (req, res) => {
   try {
     const user = await FemaleUser.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: messages.COMMON.USER_NOT_FOUND 
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     if (!user.videoUrl) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No video to delete' 
+      return res.status(400).json({
+        success: false,
+        message: 'No video to delete'
       });
     }
-    
+
     // Store video URL for potential Cloudinary cleanup
     const deletedVideoUrl = user.videoUrl;
-    
+
     // Remove video URL
     user.videoUrl = null;
     await user.save();
-    
-    return res.json({ 
-      success: true, 
+
+    return res.json({
+      success: true,
       message: 'Video deleted successfully',
       data: {
         deletedVideoUrl,
@@ -1535,38 +1541,38 @@ exports.deleteVideo = async (req, res) => {
 exports.deletePreferenceItem = async (req, res) => {
   try {
     const { type, itemId } = req.params; // type: hobbies|sports|film|music|travel
-    
+
     const validTypes = ['hobbies', 'sports', 'film', 'music', 'travel'];
     if (!validTypes.includes(type)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Invalid type. Must be one of: ${validTypes.join(', ')}` 
+      return res.status(400).json({
+        success: false,
+        message: `Invalid type. Must be one of: ${validTypes.join(', ')}`
       });
     }
-    
+
     const user = await FemaleUser.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: messages.COMMON.USER_NOT_FOUND 
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     // Remove item by MongoDB's _id (subdocument ID)
     const originalLength = (user[type] || []).length;
     user[type] = (user[type] || []).filter(item => String(item._id) !== String(itemId));
-    
+
     if (user[type].length === originalLength) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Item with _id ${itemId} not found in ${type}` 
+      return res.status(404).json({
+        success: false,
+        message: `Item with _id ${itemId} not found in ${type}`
       });
     }
-    
+
     await user.save();
-    
-    return res.json({ 
-      success: true, 
+
+    return res.json({
+      success: true,
       message: `${type} item deleted successfully`,
       data: {
         type,
@@ -1589,15 +1595,15 @@ exports.listMaleUsers = async (req, res) => {
     // Get list of users that the current female user has blocked
     const blockedByCurrentUser = await FemaleBlockList.find({ femaleUserId: req.user.id }).select('blockedUserId');
     const blockedByCurrentUserIds = blockedByCurrentUser.map(block => block.blockedUserId);
-    
+
     // Get list of users who have blocked the current female user
     const blockedByOthers = await MaleBlockList.find({ blockedUserId: req.user.id }).select('maleUserId');
     const blockedByOthersIds = blockedByOthers.map(block => block.maleUserId);
 
-    const filter = { 
-      status: 'active', 
+    const filter = {
+      status: 'active',
       reviewStatus: 'accepted',
-      _id: { 
+      _id: {
         $nin: [...blockedByCurrentUserIds, ...blockedByOthersIds] // Exclude users blocked by either party
       }
     };
@@ -1639,8 +1645,8 @@ exports.cleanupIncompleteProfiles = async (req, res) => {
       createdAt: { $lt: sevenDaysAgo }
     });
 
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       message: `Cleaned up ${result.deletedCount} incomplete profile(s)`,
       deletedCount: result.deletedCount
     });
@@ -1653,18 +1659,18 @@ exports.cleanupIncompleteProfiles = async (req, res) => {
 exports.updateReviewStatus = async (req, res) => {
   try {
     const { userId, reviewStatus } = req.body;
-    
+
     const user = await FemaleUser.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
     }
-    
+
     const oldReviewStatus = user.reviewStatus;
     user.reviewStatus = reviewStatus;
     await user.save();
-    
+
     // Note: Referral bonus is handled only in admin approval, not in user-side review status update
-    
+
     return res.json({
       success: true,
       message: 'Review status updated successfully',
@@ -1683,11 +1689,11 @@ exports.toggleOnlineStatus = async (req, res) => {
   try {
     const userId = req.user._id;
     const { onlineStatus, latitude, longitude } = req.body; // true for online, false for offline
-    
+
     if (typeof onlineStatus !== 'boolean') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'onlineStatus (boolean) is required in request body' 
+      return res.status(400).json({
+        success: false,
+        message: 'onlineStatus (boolean) is required in request body'
       });
     }
 
@@ -1705,15 +1711,15 @@ exports.toggleOnlineStatus = async (req, res) => {
           message: 'Location is required to go online'
         });
       }
-      
       // Set online start time
       user.onlineStartTime = new Date();
       user.onlineStatus = true;
-      
       user.latitude = parseFloat(latitude);
       user.longitude = parseFloat(longitude);
       user.locationUpdatedAt = new Date();
-    } 
+      // Evaluate score rules for ONLINE_HOURS (on online event, pass current totalOnlineMinutes)
+      await evaluateScoreRules(user._id, 'ONLINE_HOURS', { onlineMinutes: user.totalOnlineMinutes || 0 });
+    }
     // If going offline
     else {
       // Calculate online duration and add to total
@@ -1728,8 +1734,8 @@ exports.toggleOnlineStatus = async (req, res) => {
 
     await user.save();
 
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       message: messages.USER.STATUS_UPDATED(onlineStatus),
       data: {
         onlineStatus: user.onlineStatus,
@@ -1746,25 +1752,25 @@ exports.locationRefresh = async (req, res) => {
   try {
     const userId = req.user._id;
     const { latitude, longitude } = req.body;
-    
+
     if (latitude === undefined || longitude === undefined) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'latitude and longitude are required in request body' 
+      return res.status(400).json({
+        success: false,
+        message: 'latitude and longitude are required in request body'
       });
     }
 
     // Validate coordinates
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
-    
+
     if (isNaN(lat) || lat < -90 || lat > 90) {
       return res.status(400).json({
         success: false,
         message: 'latitude must be a number between -90 and 90'
       });
     }
-    
+
     if (isNaN(lng) || lng < -180 || lng > 180) {
       return res.status(400).json({
         success: false,
@@ -1779,8 +1785,8 @@ exports.locationRefresh = async (req, res) => {
 
     // Only update location if user is online
     if (!user.onlineStatus) {
-      return res.json({ 
-        success: true, 
+      return res.json({
+        success: true,
         message: 'User is offline, location update ignored',
         data: {
           onlineStatus: user.onlineStatus
@@ -1795,8 +1801,8 @@ exports.locationRefresh = async (req, res) => {
 
     await user.save();
 
-    return res.json({ 
-      success: true, 
+    return res.json({
+      success: true,
       message: 'Location updated successfully',
       data: {
         latitude: user.latitude,
@@ -1813,10 +1819,10 @@ exports.updateProfileDetails = async (req, res) => {
   try {
     const { name, bio, age } = req.body;
     const userId = req.user._id;
-    
+
     // Create update object with only provided fields
     const updateData = {};
-    
+
     if (name !== undefined) {
       updateData.name = name;
     }
@@ -1826,27 +1832,27 @@ exports.updateProfileDetails = async (req, res) => {
     if (age !== undefined) {
       updateData.age = age;
     }
-    
+
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         success: false,
         message: "No fields provided for update"
       });
     }
-    
+
     const user = await FemaleUser.findByIdAndUpdate(
       userId,
       updateData,
       { new: true }
     ).select('-otp -password');
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
         message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     return res.json({
       success: true,
       message: "Profile details updated successfully",
@@ -1863,7 +1869,7 @@ exports.updateEarningRate = async (req, res) => {
   try {
     const { coinsPerMinute } = req.body;
     const userId = req.user._id;
-    
+
     // Validate coinsPerMinute is provided
     if (coinsPerMinute === undefined) {
       return res.status(400).json({
@@ -1871,7 +1877,7 @@ exports.updateEarningRate = async (req, res) => {
         message: "coinsPerMinute is required"
       });
     }
-    
+
     // Validate coinsPerMinute is a positive number
     const rate = Number(coinsPerMinute);
     if (isNaN(rate) || rate < 0) {
@@ -1880,22 +1886,22 @@ exports.updateEarningRate = async (req, res) => {
         message: "coinsPerMinute must be a positive number"
       });
     }
-    
+
     const updateData = { coinsPerMinute: rate };
-    
+
     const user = await FemaleUser.findByIdAndUpdate(
       userId,
       updateData,
       { new: true }
     ).select('-otp -password');
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
         message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     return res.json({
       success: true,
       message: "Earning rate updated successfully",
@@ -1914,7 +1920,7 @@ exports.updateLocation = async (req, res) => {
   try {
     const { latitude, longitude } = req.body;
     const userId = req.user._id;
-    
+
     // Validate latitude and longitude are provided
     if (latitude === undefined || longitude === undefined) {
       return res.status(400).json({
@@ -1922,7 +1928,7 @@ exports.updateLocation = async (req, res) => {
         message: "latitude and longitude are required"
       });
     }
-    
+
     // Validate latitude is within valid range (-90 to 90)
     const lat = Number(latitude);
     if (isNaN(lat) || lat < -90 || lat > 90) {
@@ -1931,7 +1937,7 @@ exports.updateLocation = async (req, res) => {
         message: "latitude must be a number between -90 and 90"
       });
     }
-    
+
     // Validate longitude is within valid range (-180 to 180)
     const lng = Number(longitude);
     if (isNaN(lng) || lng < -180 || lng > 180) {
@@ -1940,25 +1946,25 @@ exports.updateLocation = async (req, res) => {
         message: "longitude must be a number between -180 and 180"
       });
     }
-    
-    const updateData = { 
+
+    const updateData = {
       latitude: lat,
       longitude: lng
     };
-    
+
     const user = await FemaleUser.findByIdAndUpdate(
       userId,
       updateData,
       { new: true }
     ).select('-otp -password');
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
         message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     return res.json({
       success: true,
       message: "Location updated successfully",

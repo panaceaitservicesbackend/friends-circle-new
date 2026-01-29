@@ -65,7 +65,7 @@ exports.getAgencyEarnings = async (req, res) => {
       status: 'active',
       reviewStatus: 'accepted'
     })
-    .select('_id name images')
+    .select('_id name images score')
     .populate('images', 'imageUrl');
     
     if (females.length === 0) {
@@ -111,6 +111,7 @@ exports.getAgencyEarnings = async (req, res) => {
         femaleId: female._id,
         name: female.name || 'Unknown',
         thumbnail: thumbnail,
+        score: typeof female.score === 'number' ? female.score : 0,
         earningCoins: stat ? Math.round(stat.totalCoins * 100) / 100 : 0, // Round to 2 decimals
         timeHours: stat ? Number((stat.totalSeconds / 3600).toFixed(1)) : 0
       };

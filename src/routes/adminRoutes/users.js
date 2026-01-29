@@ -12,6 +12,10 @@ router.get('/', auth, dynamicPermissionCheck, controller.listUsers);
 // Toggle status (accepts form-data or JSON)
 router.post('/toggle-status', auth, dynamicPermissionCheck, parser.none(), controller.toggleStatus);
 
+
+// Score operations for a female user (accepts JSON or form-data)
+const scoreController = require('../../controllers/adminControllers/userManagementController');
+router.post('/operate-score', auth, dynamicPermissionCheck, parser.none(), scoreController.operateScore);
 // Wallet/Coin operations for a user (accepts JSON or form-data)
 router.post('/operate-balance', auth, dynamicPermissionCheck, parser.none(), controller.operateBalance);
 

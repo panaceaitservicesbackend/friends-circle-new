@@ -65,6 +65,12 @@ const femaleUserSchema = new mongoose.Schema({
   followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FemaleFollowers' }], // Fixed: should reference FemaleFollowers, not MaleUser
   femalefollowing: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FemaleFollowing' }], // Fixed: should reference FemaleFollowing
   earnings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Earnings' }],
+  // Score system fields
+  score: { type: Number, default: 0 },
+  dailyScore: { type: Number, default: 0 },
+  weeklyScore: { type: Number, default: 0 },
+  lastActiveDate: { type: Date },
+  consecutiveActiveDays: { type: Number, default: 0 },
   blockList: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FemaleUser' }],
   beautyFilter: { type: Boolean, default: false },
   hideAge: { type: Boolean, default: false },

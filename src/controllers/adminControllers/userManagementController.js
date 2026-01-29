@@ -1,3 +1,33 @@
+// Score operation (credit/debit) for female user
+const ScoreHistory = require('../../models/femaleUser/ScoreHistory');
+exports.operateScore = async (req, res) => {
+  try {
+    const { userId, action, amount, message } = req.body;
+    if (!userId) return res.status(400).json({ success: false, message: 'userId is required' });
+    if (!['credit', 'debit'].includes(action)) return res.status(400).json({ success: false, message: 'Invalid action' });
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ success: false, message: 'Invalid amount' });
+    const user = await FemaleUser.findById(userId);
+    if (!user) return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
+    const updatedScore = action === 'credit' ? (user.score || 0) + numericAmount : (user.score || 0) - numericAmount;
+    if (updatedScore < 0) return res.status(400).json({ success: false, message: 'Insufficient score' });
+    user.score = updatedScore;
+    await user.save();
+    // Log to ScoreHistory
+    await ScoreHistory.create({
+      femaleUserId: user._id,
+      activityType: 'ADMIN_BONUS',
+      scoreAdded: action === 'credit' ? numericAmount : -numericAmount,
+      referenceDate: new Date(),
+      addedBy: 'ADMIN',
+      comment: message || (action === 'credit' ? 'Admin credited score' : 'Admin debited score'),
+      createdAt: new Date()
+    });
+    return res.json({ success: true, data: { userId: user._id, score: updatedScore } });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
 const MaleUser = require('../../models/maleUser/MaleUser');
 const FemaleUser = require('../../models/femaleUser/FemaleUser');
 const getUserId = require('../../utils/getUserId');
@@ -111,20 +141,25 @@ exports.listUsers = async (req, res) => {
 				path: 'favourites',
 				select: 'name email'
 			});
-		} else if (type === 'female') {
-			data = await FemaleUser.find().populate({
-				path: 'images',
-				select: 'femaleUserId imageUrl createdAt updatedAt'
-			}).populate({
-				path: 'interests',
-				select: 'title _id status'
-			}).populate({
-				path: 'languages',
-				select: 'title _id status'
-			}).populate({
-				path: 'favourites',
-				select: 'firstName lastName email'
-			});
+    } else if (type === 'female') {
+      data = await FemaleUser.find()
+        .select('name email score earnings totalOnlineMinutes images')
+        .populate({
+          path: 'images',
+          select: 'femaleUserId imageUrl createdAt updatedAt'
+        })
+        .populate({
+          path: 'interests',
+          select: 'title _id status'
+        })
+        .populate({
+          path: 'languages',
+          select: 'title _id status'
+        })
+        .populate({
+          path: 'favourites',
+          select: 'firstName lastName email'
+        });
 		} else if (type === 'agency') {
 			data = await AgencyUser.find().populate({
 				path: 'referredByAgency',
