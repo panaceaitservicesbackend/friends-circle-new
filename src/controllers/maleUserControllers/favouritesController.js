@@ -8,29 +8,24 @@ exports.addToMaleFavourites = async (req, res) => {
 
   try {
     const maleUser = await MaleUser.findById(req.user.id);
-    
-    // Check if the male user has already added this female user to MaleFavourites
-    const existingFavourite = await MaleFavourites.findOne({
-      maleUserId: maleUser._id,
-      femaleUserId,
-    });
-    
-    if (existingFavourite) {
-      return res.status(400).json({ success: false, message: 'Already added to MaleFavourites.' });
+
+    if (!maleUser) {
+      return res.status(404).json({ success: false, message: 'Male user not found' });
     }
 
-    // Add to male user's MaleFavourites list
-    const newFavourite = new MaleFavourites({
-      maleUserId: maleUser._id,
-      femaleUserId,
-    });
-    await newFavourite.save();
+    if (maleUser.favourites.includes(femaleUserId)) {
+      return res.status(400).json({ success: false, message: 'Already in favourites' });
+    }
 
-    res.json({ success: true, message: 'Female user added to MaleFavourites.' });
+    maleUser.favourites.push(femaleUserId);
+    await maleUser.save();
+
+    res.json({ success: true, message: 'Added to favourites' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 // Remove a Female User from MaleFavourites
 exports.removeFromMaleFavourites = async (req, res) => {

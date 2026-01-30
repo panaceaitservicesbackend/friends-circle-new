@@ -28,7 +28,7 @@ exports.updateInterests = async (req, res) => {
         message: messages.PROFILE.INTEREST_REQUIRED
       });
     }
-    
+
     // Parse interests in case it comes as string from form-data
     let parsedInterestIds = interests;
     if (typeof parsedInterestIds === 'string') {
@@ -41,31 +41,31 @@ exports.updateInterests = async (req, res) => {
         });
       }
     }
-    
+
     if (!parsedInterestIds || !Array.isArray(parsedInterestIds)) {
       return res.status(400).json({
         success: false,
         message: messages.PROFILE.INTEREST_REQUIRED
       });
     }
-    
+
     // Validate that all IDs are valid ObjectIds
     const validIds = parsedInterestIds
       .map(id => mongoose.Types.ObjectId.isValid(id) ? id : null)
       .filter(Boolean);
-    
+
     if (validIds.length === 0) {
       return res.status(400).json({
         success: false,
         message: messages.PROFILE.INTEREST_REQUIRED
       });
     }
-    
+
     // Validate that these ObjectIds exist in the Interest collection
     const Interest = require('../../models/admin/Interest');
     const validInterests = await Interest.find({ _id: { $in: validIds } });
     const validInterestIds = validInterests.map(i => i._id);
-    
+
     // Get the existing user to preserve other data
     const existingUser = await MaleUser.findById(userId);
     if (!existingUser) {
@@ -74,14 +74,11 @@ exports.updateInterests = async (req, res) => {
         message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
-    // Combine existing interests with new ones, avoiding duplicates
-    const existingInterestIds = existingUser.interests || [];
-    const allInterestIds = [...new Set([...existingInterestIds, ...validInterestIds])];
-    
+
+    // Replace interests completely (no merge, no duplicates)
     const user = await MaleUser.findByIdAndUpdate(
       userId,
-      { interests: allInterestIds },
+      { $set: { interests: validInterestIds } },
       { new: true }
     ).populate('interests', 'title');
 
@@ -117,7 +114,7 @@ exports.updateLanguages = async (req, res) => {
         message: messages.PROFILE.LANGUAGE_REQUIRED
       });
     }
-    
+
     // Parse languages in case it comes as string from form-data
     let parsedLanguageIds = languages;
     if (typeof parsedLanguageIds === 'string') {
@@ -130,31 +127,31 @@ exports.updateLanguages = async (req, res) => {
         });
       }
     }
-    
+
     if (!parsedLanguageIds || !Array.isArray(parsedLanguageIds)) {
       return res.status(400).json({
         success: false,
         message: messages.PROFILE.LANGUAGE_REQUIRED
       });
     }
-    
+
     // Validate that all IDs are valid ObjectIds
     const validIds = parsedLanguageIds
       .map(id => mongoose.Types.ObjectId.isValid(id) ? id : null)
       .filter(Boolean);
-    
+
     if (validIds.length === 0) {
       return res.status(400).json({
         success: false,
         message: messages.PROFILE.LANGUAGE_REQUIRED
       });
     }
-    
+
     // Validate that these ObjectIds exist in the Language collection
     const Language = require('../../models/admin/Language');
     const validLanguages = await Language.find({ _id: { $in: validIds } });
     const validLanguageIds = validLanguages.map(l => l._id);
-    
+
     // Get the existing user to preserve other data
     const existingUser = await MaleUser.findById(userId);
     if (!existingUser) {
@@ -163,11 +160,11 @@ exports.updateLanguages = async (req, res) => {
         message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     // Combine existing languages with new ones, avoiding duplicates
     const existingLanguageIds = existingUser.languages || [];
     const allLanguageIds = [...new Set([...existingLanguageIds, ...validLanguageIds])];
-    
+
     const user = await MaleUser.findByIdAndUpdate(
       userId,
       { languages: allLanguageIds },
@@ -193,10 +190,9 @@ exports.updateLanguages = async (req, res) => {
   }
 };
 
-// Update user hobbies
+// Update user hobbies (REPLACE, no duplicates)
 exports.updateHobbies = async (req, res) => {
   try {
-    // Parse hobbies from either body or form data
     const hobbies = parseFormValue(req.body.hobbies);
     const userId = req.user._id;
 
@@ -206,17 +202,8 @@ exports.updateHobbies = async (req, res) => {
         message: messages.PROFILE.HOBBIES_REQUIRED
       });
     }
-    
-    // Get the existing user to preserve other data
-    const existingUser = await MaleUser.findById(userId);
-    if (!existingUser) {
-      return res.status(404).json({
-        success: false,
-        message: messages.COMMON.USER_NOT_FOUND
-      });
-    }
-    
-    // Process hobbies to ensure they are in object format with id and name
+
+    // Normalize hobbies to { id, name }
     const processedHobbies = hobbies.map(item => {
       if (typeof item === 'object' && item.id && item.name) {
         return { id: item.id, name: item.name };
@@ -225,22 +212,11 @@ exports.updateHobbies = async (req, res) => {
         return { id, name: String(item) };
       }
     });
-    
-    // Combine existing hobbies with new ones, avoiding duplicates by name
-    const existingHobbies = existingUser.hobbies || [];
-    const allHobbies = [...existingHobbies];
-    
-    // Add new hobbies that don't already exist
-    for (const newHobby of processedHobbies) {
-      const exists = allHobbies.some(h => h.name === newHobby.name);
-      if (!exists) {
-        allHobbies.push(newHobby);
-      }
-    }
 
+    // 🔁 Replace hobbies completely
     const user = await MaleUser.findByIdAndUpdate(
       userId,
-      { hobbies: allHobbies },
+      { $set: { hobbies: processedHobbies } },
       { new: true }
     );
 
@@ -263,24 +239,25 @@ exports.updateHobbies = async (req, res) => {
   }
 };
 
+
 // Helper function to parse form-data values (handles JSON strings)
 const parseFormValue = (value) => {
   if (!value) return value;
   if (typeof value === 'string') {
     // Remove surrounding quotes if present (handle multiple levels of quotes)
     let trimmed = value.trim();
-    
+
     // Keep removing outer quotes until no more can be removed
     let previous;
     do {
       previous = trimmed;
-      if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || 
-          (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
         trimmed = trimmed.slice(1, -1);
       }
-    } while (trimmed !== previous && ((trimmed.startsWith('"') && trimmed.endsWith('"')) || 
-                                    (trimmed.startsWith("'") && trimmed.endsWith("'"))));
-    
+    } while (trimmed !== previous && ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'"))));
+
     // Handle special case where string looks like an array literal with objects
     if (trimmed.startsWith('[') && trimmed.includes('{') && trimmed.includes('}')) {
       try {
@@ -295,7 +272,7 @@ const parseFormValue = (value) => {
             .replace(/\t/g, '')
             .replace(/\r/g, '')
             .replace(/\'/g, "'");
-          
+
           // Try to parse again
           return JSON.parse(processed);
         } catch (e2) {
@@ -309,13 +286,13 @@ const parseFormValue = (value) => {
           } catch (e3) {
             console.error('Failed to parse as string array:', e3);
           }
-          
+
           // Return original value if all parsing attempts fail
           return value;
         }
       }
     }
-    
+
     // Try to parse as JSON array/object
     if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
       try {
@@ -333,7 +310,6 @@ const parseFormValue = (value) => {
 // Update user sports
 exports.updateSports = async (req, res) => {
   try {
-    // Parse sports from either body or form data
     const sports = parseFormValue(req.body.sports);
     const userId = req.user._id;
 
@@ -344,16 +320,6 @@ exports.updateSports = async (req, res) => {
       });
     }
 
-    // Get the existing user to preserve other data
-    const existingUser = await MaleUser.findById(userId);
-    if (!existingUser) {
-      return res.status(404).json({
-        success: false,
-        message: messages.COMMON.USER_NOT_FOUND
-      });
-    }
-    
-    // Process sports to ensure they are in object format with id and name
     const processedSports = sports.map(item => {
       if (typeof item === 'object' && item.id && item.name) {
         return { id: item.id, name: item.name };
@@ -362,22 +328,10 @@ exports.updateSports = async (req, res) => {
         return { id, name: String(item) };
       }
     });
-    
-    // Combine existing sports with new ones, avoiding duplicates by name
-    const existingSports = existingUser.sports || [];
-    const allSports = [...existingSports];
-    
-    // Add new sports that don't already exist
-    for (const newSport of processedSports) {
-      const exists = allSports.some(s => s.name === newSport.name);
-      if (!exists) {
-        allSports.push(newSport);
-      }
-    }
-    
+
     const user = await MaleUser.findByIdAndUpdate(
       userId,
-      { sports: allSports },
+      { $set: { sports: processedSports } },
       { new: true }
     );
 
@@ -391,19 +345,17 @@ exports.updateSports = async (req, res) => {
     return res.json({
       success: true,
       message: "Sports updated successfully",
-      data: {
-        sports: user.sports
-      }
+      data: { sports: user.sports }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 };
 
+
 // Update user film preferences
 exports.updateFilm = async (req, res) => {
   try {
-    // Parse film from either body or form data
     const film = parseFormValue(req.body.film);
     const userId = req.user._id;
 
@@ -414,16 +366,6 @@ exports.updateFilm = async (req, res) => {
       });
     }
 
-    // Get the existing user to preserve other data
-    const existingUser = await MaleUser.findById(userId);
-    if (!existingUser) {
-      return res.status(404).json({
-        success: false,
-        message: messages.COMMON.USER_NOT_FOUND
-      });
-    }
-    
-    // Process film to ensure they are in object format with id and name
     const processedFilm = film.map(item => {
       if (typeof item === 'object' && item.id && item.name) {
         return { id: item.id, name: item.name };
@@ -432,22 +374,10 @@ exports.updateFilm = async (req, res) => {
         return { id, name: String(item) };
       }
     });
-    
-    // Combine existing film preferences with new ones, avoiding duplicates by name
-    const existingFilm = existingUser.film || [];
-    const allFilm = [...existingFilm];
-    
-    // Add new film preferences that don't already exist
-    for (const newFilm of processedFilm) {
-      const exists = allFilm.some(f => f.name === newFilm.name);
-      if (!exists) {
-        allFilm.push(newFilm);
-      }
-    }
-    
+
     const user = await MaleUser.findByIdAndUpdate(
       userId,
-      { film: allFilm },
+      { $set: { film: processedFilm } },
       { new: true }
     );
 
@@ -461,19 +391,17 @@ exports.updateFilm = async (req, res) => {
     return res.json({
       success: true,
       message: "Film preferences updated successfully",
-      data: {
-        film: user.film
-      }
+      data: { film: user.film }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 };
 
+
 // Update user music preferences
 exports.updateMusic = async (req, res) => {
   try {
-    // Parse music from either body or form data
     const music = parseFormValue(req.body.music);
     const userId = req.user._id;
 
@@ -484,16 +412,6 @@ exports.updateMusic = async (req, res) => {
       });
     }
 
-    // Get the existing user to preserve other data
-    const existingUser = await MaleUser.findById(userId);
-    if (!existingUser) {
-      return res.status(404).json({
-        success: false,
-        message: messages.COMMON.USER_NOT_FOUND
-      });
-    }
-    
-    // Process music to ensure they are in object format with id and name
     const processedMusic = music.map(item => {
       if (typeof item === 'object' && item.id && item.name) {
         return { id: item.id, name: item.name };
@@ -502,22 +420,10 @@ exports.updateMusic = async (req, res) => {
         return { id, name: String(item) };
       }
     });
-    
-    // Combine existing music preferences with new ones, avoiding duplicates by name
-    const existingMusic = existingUser.music || [];
-    const allMusic = [...existingMusic];
-    
-    // Add new music preferences that don't already exist
-    for (const newMusic of processedMusic) {
-      const exists = allMusic.some(m => m.name === newMusic.name);
-      if (!exists) {
-        allMusic.push(newMusic);
-      }
-    }
-    
+
     const user = await MaleUser.findByIdAndUpdate(
       userId,
-      { music: allMusic },
+      { $set: { music: processedMusic } },
       { new: true }
     );
 
@@ -531,19 +437,17 @@ exports.updateMusic = async (req, res) => {
     return res.json({
       success: true,
       message: "Music preferences updated successfully",
-      data: {
-        music: user.music
-      }
+      data: { music: user.music }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 };
 
+
 // Update user travel preferences
 exports.updateTravel = async (req, res) => {
   try {
-    // Parse travel from either body or form data
     const travel = parseFormValue(req.body.travel);
     const userId = req.user._id;
 
@@ -554,16 +458,6 @@ exports.updateTravel = async (req, res) => {
       });
     }
 
-    // Get the existing user to preserve other data
-    const existingUser = await MaleUser.findById(userId);
-    if (!existingUser) {
-      return res.status(404).json({
-        success: false,
-        message: messages.COMMON.USER_NOT_FOUND
-      });
-    }
-    
-    // Process travel to ensure they are in object format with id and name
     const processedTravel = travel.map(item => {
       if (typeof item === 'object' && item.id && item.name) {
         return { id: item.id, name: item.name };
@@ -572,22 +466,10 @@ exports.updateTravel = async (req, res) => {
         return { id, name: String(item) };
       }
     });
-    
-    // Combine existing travel preferences with new ones, avoiding duplicates by name
-    const existingTravel = existingUser.travel || [];
-    const allTravel = [...existingTravel];
-    
-    // Add new travel preferences that don't already exist
-    for (const newTravel of processedTravel) {
-      const exists = allTravel.some(t => t.name === newTravel.name);
-      if (!exists) {
-        allTravel.push(newTravel);
-      }
-    }
-    
+
     const user = await MaleUser.findByIdAndUpdate(
       userId,
-      { travel: allTravel },
+      { $set: { travel: processedTravel } },
       { new: true }
     );
 
@@ -601,9 +483,7 @@ exports.updateTravel = async (req, res) => {
     return res.json({
       success: true,
       message: "Travel preferences updated successfully",
-      data: {
-        travel: user.travel
-      }
+      data: { travel: user.travel }
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -627,7 +507,7 @@ exports.registerUser = async (req, res) => {
 
     // Check if the email is already registered
     const existingUser = await MaleUser.findOne({ email });
-    
+
     if (existingUser) {
       // If user exists but is not verified, allow re-registration
       if (!existingUser.isVerified || !existingUser.isActive) {
@@ -635,7 +515,7 @@ exports.registerUser = async (req, res) => {
         existingUser.otp = otp;
         existingUser.isVerified = false;
         existingUser.isActive = false;
-        
+
         // Handle referral code if provided
         if (referralCode) {
           const referredByUser = await MaleUser.findOne({ referralCode });
@@ -643,10 +523,10 @@ exports.registerUser = async (req, res) => {
             existingUser.referredBy = [referredByUser._id];
           }
         }
-        
+
         await existingUser.save();
         await sendOtp(email, otp);
-        
+
         return res.status(201).json({
           success: true,
           message: messages.AUTH.OTP_SENT_EMAIL,
@@ -655,8 +535,8 @@ exports.registerUser = async (req, res) => {
         });
       } else {
         // User is already verified and active
-        return res.status(400).json({ 
-          success: false, 
+        return res.status(400).json({
+          success: false,
           message: messages.AUTH.USER_ALREADY_EXISTS
         });
       }
@@ -675,13 +555,13 @@ exports.registerUser = async (req, res) => {
     }
 
     // Create a new MaleUser
-    const newUser = new MaleUser({ 
-      firstName, 
-      lastName, 
-      email, 
-      password, 
-      otp, 
-      referredBy: referredByUser ? [referredByUser._id] : [], 
+    const newUser = new MaleUser({
+      firstName,
+      lastName,
+      email,
+      password,
+      otp,
+      referredBy: referredByUser ? [referredByUser._id] : [],
       referralCode: myReferral,
       isVerified: false,
       isActive: false
@@ -771,7 +651,7 @@ exports.verifyLoginOtp = async (req, res) => {
     } else {
       return res.status(400).json({ success: false, message: messages.COMMON.EMAIL_OR_OTP_REQUIRED });
     }
-    
+
     if (user) {
       // Clear OTP after successful login
       user.otp = undefined;
@@ -804,7 +684,7 @@ exports.verifyLoginOtp = async (req, res) => {
 exports.verifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
-    
+
     // Validate email if provided
     if (email && !isValidEmail(email)) {
       return res.status(400).json({
@@ -823,19 +703,19 @@ exports.verifyOtp = async (req, res) => {
     } else {
       return res.status(400).json({ success: false, message: messages.COMMON.EMAIL_OR_OTP_REQUIRED });
     }
-    
+
     if (!user) {
       return res.status(400).json({ success: false, message: messages.COMMON.INVALID_OTP });
     }
-    
+
     user.isVerified = true;
     user.isActive = true;    // Mark the user as active
     user.otp = undefined;  // Clear OTP after verification
 
     await user.save();
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: messages.AUTH.OTP_VERIFIED,
       data: {
         token: generateToken(user._id, 'male'),
@@ -861,7 +741,7 @@ exports.uploadImage = async (req, res) => {
     }
 
     const uploadToCloudinary = require('../../utils/cloudinaryUpload');
-    
+
     // Save each image in Image collection and keep track of them
     const savedImages = [];
     for (const f of req.files) {
@@ -876,7 +756,7 @@ exports.uploadImage = async (req, res) => {
         return res.status(500).json({ success: false, message: 'Failed to upload image to Cloudinary', error: uploadErr.message });
       }
     }
-    
+
     // Also persist to MaleUser.images array as references to Image documents
     const user = await MaleUser.findById(req.user.id);
     const newImageIds = savedImages.map(img => img._id);
@@ -921,7 +801,7 @@ exports.getUserProfile = async (req, res) => {
         path: 'favourites',
         select: 'name email'
       });
-      
+
     if (!user) {
       return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
     }
@@ -941,15 +821,15 @@ exports.listFemaleUsers = async (req, res) => {
     // Get list of users that the current male user has blocked
     const blockedByCurrentUser = await MaleBlockList.find({ maleUserId: req.user.id }).select('blockedUserId');
     const blockedByCurrentUserIds = blockedByCurrentUser.map(block => block.blockedUserId);
-    
+
     // Get list of users who have blocked the current male user
     const blockedByOthers = await FemaleBlockList.find({ blockedUserId: req.user.id }).select('femaleUserId');
     const blockedByOthersIds = blockedByOthers.map(block => block.femaleUserId);
 
-    const filter = { 
-      status: 'active', 
+    const filter = {
+      status: 'active',
       reviewStatus: 'accepted',
-      _id: { 
+      _id: {
         $nin: [...blockedByCurrentUserIds, ...blockedByOthersIds] // Exclude users blocked by either party
       }
     };
@@ -998,22 +878,22 @@ exports.listFemaleUsers = async (req, res) => {
     const maleUserId = req.user._id;
     const maleFollowing = await MaleFollowing.find({ maleUserId }).select('femaleUserId');
     const maleFollowingIds = new Set(maleFollowing.map(f => f.femaleUserId.toString()));
-    
+
     const femaleFollowing = await FemaleFollowing.find({ femaleUserId: { $in: items.map(item => item._id) }, maleUserId });
     const femaleFollowingMap = new Map(femaleFollowing.map(f => [f.maleUserId.toString(), f.femaleUserId.toString()]));
 
     // Process each female user with appropriate visibility
     const data = items.map((u) => {
       // Check if mutual follow exists
-      const isMutual = maleFollowingIds.has(u._id.toString()) && 
-                    femaleFollowingMap.has(maleUserId.toString()) &&
-                    femaleFollowingMap.get(maleUserId.toString()) === u._id.toString();
+      const isMutual = maleFollowingIds.has(u._id.toString()) &&
+        femaleFollowingMap.has(maleUserId.toString()) &&
+        femaleFollowingMap.get(maleUserId.toString()) === u._id.toString();
 
       // Determine allowed fields based on mutual follow status
       const allowedFields = isMutual ? FEMALE_MUTUAL_FIELDS : FEMALE_PUBLIC_FIELDS;
-      
+
       const response = {};
-      
+
       // Apply field filtering
       allowedFields.forEach(field => {
         if (u[field] !== undefined) {
@@ -1022,7 +902,7 @@ exports.listFemaleUsers = async (req, res) => {
             // Don't include age if hideAge is true and not mutual
             return;
           }
-          
+
           // Handle images - only first image before mutual follow
           if (field === 'images') {
             if (isMutual) {
@@ -1036,17 +916,17 @@ exports.listFemaleUsers = async (req, res) => {
           }
         }
       });
-      
+
       // If not mutual and age is hidden, remove it from response
       if (!isMutual && u.hideAge) {
         delete response.age;
       }
-      
+
       // Add email only after mutual follow
       if (isMutual && u.email) {
         response.email = u.email;
       }
-      
+
       return response;
     });
 
@@ -1060,7 +940,7 @@ exports.listFemaleUsers = async (req, res) => {
 exports.completeProfile = async (req, res) => {
   try {
     const userId = req.user._id;
-    
+
     const user = await MaleUser.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: messages.COMMON.USER_NOT_FOUND });
@@ -1068,8 +948,8 @@ exports.completeProfile = async (req, res) => {
 
     // Check if profile is already completed
     if (user.profileCompleted) {
-      return res.status(400).json({ 
-        success: false, 
+      return res.status(400).json({
+        success: false,
         message: 'Profile already completed'
       });
     }
@@ -1077,7 +957,7 @@ exports.completeProfile = async (req, res) => {
     // Update profile completion status
     user.profileCompleted = true;
     await user.save();
-    
+
     // Process referral bonus if the user was referred
     if (user.referredBy && user.referredBy.length > 0) {
       const processReferralBonus = require('../../utils/processReferralBonus');
@@ -1086,7 +966,7 @@ exports.completeProfile = async (req, res) => {
         console.log(`Referral bonus processed for male user ${user._id} after profile completion`);
       }
     }
-    
+
     return res.json({
       success: true,
       message: 'Profile completed successfully',
@@ -1119,7 +999,7 @@ exports.deleteImage = async (req, res) => {
         user.images = user.images.filter((imageId) => String(imageId) !== String(imageDoc._id));
         await user.save();
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return res.json({ success: true, message: messages.IMAGE.IMAGE_DELETED });
   } catch (err) {
@@ -1138,33 +1018,33 @@ exports.updateProfileAndImage = async (req, res) => {
     // Helper to convert values to ObjectId array
     const toObjectIdArray = (arr) => {
       if (!Array.isArray(arr)) return [];
-      
+
       return arr
         .map(id => mongoose.Types.ObjectId.isValid(id) ? id : null)
         .filter(Boolean);
     };
-    
+
     // Helper function to parse form-data values (handles JSON strings)
     const parseFormValue = (value) => {
       if (!value) return value;
       if (typeof value === 'string') {
         // Remove surrounding quotes if present (handle multiple levels of quotes)
         let trimmed = value.trim();
-        
+
         // Keep removing outer quotes until no more can be removed
         let previous;
         do {
           previous = trimmed;
-          if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || 
-              (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+          if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+            (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
             trimmed = trimmed.slice(1, -1);
           }
-        } while (trimmed !== previous && ((trimmed.startsWith('"') && trimmed.endsWith('"')) || 
-                                        (trimmed.startsWith("'") && trimmed.endsWith("'"))));
-        
+        } while (trimmed !== previous && ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+          (trimmed.startsWith("'") && trimmed.endsWith("'"))));
+
         // Additional cleanup: remove any remaining escaped quotes
         trimmed = trimmed.replace(/\"/g, '"');
-        
+
         // Handle special case where string looks like an array literal with objects
         // This happens when form-data sends string representations of arrays
         if (trimmed.startsWith('[') && trimmed.includes('{') && trimmed.includes('}')) {
@@ -1180,7 +1060,7 @@ exports.updateProfileAndImage = async (req, res) => {
                 .replace(/\t/g, '')
                 .replace(/\r/g, '')
                 .replace(/\'/g, "'");
-              
+
               // Try to parse again
               return JSON.parse(processed);
             } catch (e2) {
@@ -1194,13 +1074,13 @@ exports.updateProfileAndImage = async (req, res) => {
               } catch (e3) {
                 console.error('Failed to parse as string array:', e3);
               }
-              
+
               // Return original value if all parsing attempts fail
               return value;
             }
           }
         }
-        
+
         // Try to parse as JSON array/object
         if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
           try {
@@ -1263,27 +1143,27 @@ exports.updateProfileAndImage = async (req, res) => {
     if (bio) user.bio = bio;
     if (height) user.height = height;
     if (searchPreferences) user.searchPreferences = searchPreferences;
-    
+
     // Handle location updates - ✅ ALWAYS save if provided
     if (latitude !== undefined && longitude !== undefined) {
       // Validate coordinates if both provided
       const lat = parseFloat(latitude);
       const lng = parseFloat(longitude);
-      
+
       if (isNaN(lat) || lat < -90 || lat > 90) {
         return res.status(400).json({
           success: false,
           message: 'Latitude must be a number between -90 and 90'
         });
       }
-      
+
       if (isNaN(lng) || lng < -180 || lng > 180) {
         return res.status(400).json({
           success: false,
           message: 'Longitude must be a number between -180 and 180'
         });
       }
-      
+
       // ✅ ALWAYS SAVE if provided
       user.latitude = lat;
       user.longitude = lng;
@@ -1308,14 +1188,14 @@ exports.updateProfileAndImage = async (req, res) => {
       }
       user.longitude = lng;
     }
-    
+
     // Handle profile completion status - validation only
     if (profileCompleted !== undefined) {
       // If profile is being marked as completed, ensure location is provided
       if (profileCompleted === true || profileCompleted === 'true') {
         if (user.latitude === undefined || user.longitude === undefined) {
-          return res.status(400).json({ 
-            success: false, 
+          return res.status(400).json({
+            success: false,
             message: 'Latitude and longitude are required for profile completion'
           });
         }
@@ -1337,7 +1217,7 @@ exports.updateProfileAndImage = async (req, res) => {
         }
       }
     }
-    
+
     // Update interests if provided and validate
     if (req.body.interests !== undefined) {
       let interestArray = parseFormValue(req.body.interests);
@@ -1361,7 +1241,7 @@ exports.updateProfileAndImage = async (req, res) => {
       }
       // ❌ DO NOT clear interests if empty
     }
-    
+
     // Update languages if provided and validate
     if (req.body.languages !== undefined) {
       let languageArray = parseFormValue(req.body.languages);
@@ -1385,7 +1265,7 @@ exports.updateProfileAndImage = async (req, res) => {
       }
       // ❌ DO NOT clear languages if empty
     }
-    
+
     // Update religion if provided and validate
     if (religion !== undefined) {
       // Validate if religion is a valid ObjectId
@@ -1398,7 +1278,7 @@ exports.updateProfileAndImage = async (req, res) => {
         });
       }
     }
-    
+
     // Update relationship goals if provided and validate
     if (relationshipGoals) {
       const RelationGoal = require('../../models/admin/RelationGoal');
@@ -1406,22 +1286,22 @@ exports.updateProfileAndImage = async (req, res) => {
       const validGoals = await RelationGoal.find({ _id: { $in: goalArray } });
       user.relationshipGoals = validGoals.map(g => g._id);
     }
-    
+
     // Helper to process preference arrays
     const processPreferenceArray = (items, fieldName) => {
       if (!items || !Array.isArray(items) || items.length === 0) return null;
-      
+
       console.log(`Processing ${fieldName}:`, items);
-      
+
       try {
         const processed = items.map((item, index) => {
           console.log(`  Item ${index}:`, item, 'Type:', typeof item);
-          
+
           if (!item) {
             console.log(`  Skipping null/undefined item at index ${index}`);
             return null;
           }
-          
+
           if (typeof item === 'object' && item !== null) {
             // If it's already an object with id and name, return as is
             if (item.id && item.name) {
@@ -1439,12 +1319,12 @@ exports.updateProfileAndImage = async (req, res) => {
               return { id, name: String(name) };
             }
           }
-          
+
           // Handle string - convert to object with generated id
           const id = require('crypto').randomBytes(8).toString('hex');
           return { id, name: String(item) };
         }).filter(Boolean);
-        
+
         console.log(`  Processed ${fieldName}:`, processed);
         return processed;
       } catch (err) {
@@ -1452,7 +1332,7 @@ exports.updateProfileAndImage = async (req, res) => {
         throw err;
       }
     };
-    
+
     // Update preferences - APPEND new items to existing arrays
     if (hobbies) {
       const newHobbies = processPreferenceArray(hobbies, 'hobbies');
@@ -1462,7 +1342,7 @@ exports.updateProfileAndImage = async (req, res) => {
         user.hobbies = [...(user.hobbies || []), ...uniqueNew];
       }
     }
-    
+
     if (sports) {
       const newSports = processPreferenceArray(sports, 'sports');
       if (newSports && newSports.length > 0) {
@@ -1471,7 +1351,7 @@ exports.updateProfileAndImage = async (req, res) => {
         user.sports = [...(user.sports || []), ...uniqueNew];
       }
     }
-    
+
     if (film) {
       const newFilm = processPreferenceArray(film, 'film');
       if (newFilm && newFilm.length > 0) {
@@ -1480,7 +1360,7 @@ exports.updateProfileAndImage = async (req, res) => {
         user.film = [...(user.film || []), ...uniqueNew];
       }
     }
-    
+
     if (music) {
       const newMusic = processPreferenceArray(music, 'music');
       if (newMusic && newMusic.length > 0) {
@@ -1489,7 +1369,7 @@ exports.updateProfileAndImage = async (req, res) => {
         user.music = [...(user.music || []), ...uniqueNew];
       }
     }
-    
+
     if (travel) {
       const newTravel = processPreferenceArray(travel, 'travel');
       if (newTravel && newTravel.length > 0) {
@@ -1498,7 +1378,7 @@ exports.updateProfileAndImage = async (req, res) => {
         user.travel = [...(user.travel || []), ...uniqueNew];
       }
     }
-    
+
     // Handle image upload if files are provided
     if (req.files && req.files.length > 0) {
       // Map file objects to URLs, ensuring we have valid URLs
@@ -1521,24 +1401,24 @@ exports.updateProfileAndImage = async (req, res) => {
       const newImageIds = savedImages.map(img => img._id);
       user.images = Array.isArray(user.images) ? [...user.images, ...newImageIds] : newImageIds;
     }
-    
+
     // Save user with timeout to prevent hanging
     try {
       const savePromise = user.save();
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Save operation timeout')), 15000); // 15 second timeout
       });
-      
+
       await Promise.race([savePromise, timeoutPromise]);
     } catch (saveErr) {
       console.error('Error saving user in updateProfileAndImage:', saveErr);
-      return res.status(500).json({ 
-        success: false, 
+      return res.status(500).json({
+        success: false,
         error: 'Save operation failed or timed out',
         message: 'Unable to save profile update, please try again later.'
       });
     }
-    
+
     // Return updated user with populated fields
     const updatedUser = await MaleUser.findById(user._id)
       .populate('interests', 'title')
@@ -1548,11 +1428,11 @@ exports.updateProfileAndImage = async (req, res) => {
         path: 'images',
         select: 'imageUrl createdAt updatedAt'
       });
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'Profile updated successfully',
-      data: updatedUser 
+      data: updatedUser
     });
   } catch (err) {
     console.error('❌ Error in updateProfileAndImage:', err);
@@ -1564,38 +1444,38 @@ exports.updateProfileAndImage = async (req, res) => {
 exports.deletePreferenceItem = async (req, res) => {
   try {
     const { type, itemId } = req.params; // type: hobbies|sports|film|music|travel
-    
+
     const validTypes = ['hobbies', 'sports', 'film', 'music', 'travel'];
     if (!validTypes.includes(type)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: `Invalid type. Must be one of: ${validTypes.join(', ')}` 
+      return res.status(400).json({
+        success: false,
+        message: `Invalid type. Must be one of: ${validTypes.join(', ')}`
       });
     }
-    
+
     const user = await MaleUser.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: messages.COMMON.USER_NOT_FOUND 
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     // Remove item by finding the object with matching _id field
     const originalLength = (user[type] || []).length;
     user[type] = (user[type] || []).filter(item => String(item._id) !== String(itemId));
-    
+
     if (user[type].length === originalLength) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Item with id ${itemId} not found in ${type}` 
+      return res.status(404).json({
+        success: false,
+        message: `Item with id ${itemId} not found in ${type}`
       });
     }
-    
+
     await user.save();
-    
-    return res.json({ 
-      success: true, 
+
+    return res.json({
+      success: true,
       message: `${type} item deleted successfully`,
       data: {
         type,
@@ -1614,10 +1494,10 @@ exports.updateProfileDetails = async (req, res) => {
   try {
     const { firstName, lastName, searchPreferences, bio, dateOfBirth, height, religion } = req.body;
     const userId = req.user._id;
-    
+
     // Create update object with only provided fields
     const updateData = {};
-    
+
     if (firstName !== undefined) {
       updateData.firstName = firstName;
     }
@@ -1649,27 +1529,27 @@ exports.updateProfileDetails = async (req, res) => {
         });
       }
     }
-    
+
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         success: false,
         message: "No fields provided for update"
       });
     }
-    
+
     const user = await MaleUser.findByIdAndUpdate(
       userId,
       updateData,
       { new: true }
     ).select('-otp -password');
-    
+
     if (!user) {
       return res.status(404).json({
         success: false,
         message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     return res.json({
       success: true,
       message: "Profile details updated successfully",
@@ -1687,27 +1567,27 @@ exports.deleteInterest = async (req, res) => {
     const { interestId } = req.params;
     const user = await MaleUser.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: messages.COMMON.USER_NOT_FOUND 
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     // Remove interest by ObjectId
     const originalLength = (user.interests || []).length;
     user.interests = (user.interests || []).filter(interest => String(interest) !== String(interestId));
-    
+
     if (user.interests.length === originalLength) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Interest with id ${interestId} not found` 
+      return res.status(404).json({
+        success: false,
+        message: `Interest with id ${interestId} not found`
       });
     }
-    
+
     await user.save();
-    
-    return res.json({ 
-      success: true, 
+
+    return res.json({
+      success: true,
       message: 'Interest removed successfully',
       data: {
         removedInterestId: interestId
@@ -1725,27 +1605,27 @@ exports.deleteLanguage = async (req, res) => {
     const { languageId } = req.params;
     const user = await MaleUser.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: messages.COMMON.USER_NOT_FOUND 
+      return res.status(404).json({
+        success: false,
+        message: messages.COMMON.USER_NOT_FOUND
       });
     }
-    
+
     // Remove language by ObjectId
     const originalLength = (user.languages || []).length;
     user.languages = (user.languages || []).filter(language => String(language) !== String(languageId));
-    
+
     if (user.languages.length === originalLength) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Language with id ${languageId} not found` 
+      return res.status(404).json({
+        success: false,
+        message: `Language with id ${languageId} not found`
       });
     }
-    
+
     await user.save();
-    
-    return res.json({ 
-      success: true, 
+
+    return res.json({
+      success: true,
       message: 'Language removed successfully',
       data: {
         removedLanguageId: languageId
@@ -1762,11 +1642,11 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371; // Earth's radius in kilometers
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distance = R * c; // Distance in km
   return distance;
 };
@@ -1796,11 +1676,11 @@ exports.getDashboard = async (req, res) => {
     }
 
     // Get admin config for nearby distance settings and new user window
-    const adminConfig = await AdminConfig.getConfig(); 
+    const adminConfig = await AdminConfig.getConfig();
     const nearbyDistanceValue = adminConfig.nearbyDistanceValue || 5; // Default 5 km
     const nearbyDistanceUnit = adminConfig.nearbyDistanceUnit || 'km'; // Default km
     const newUserWindowDays = adminConfig.newUserWindowDays || 7; // Default 7 days for new users
-    
+
     // Base filter for all female users
     const baseFilter = {
       status: 'active',
@@ -1817,19 +1697,19 @@ exports.getDashboard = async (req, res) => {
     // Get list of users that the current male user has blocked
     const blockedByCurrentUser = await MaleBlockList.find({ maleUserId }).select('blockedUserId');
     const blockedByCurrentUserIds = blockedByCurrentUser.map(block => block.blockedUserId);
-    
+
     // Get list of users who have blocked the current male user
     const blockedByOthers = await FemaleBlockList.find({ blockedUserId: maleUserId }).select('femaleUserId');
     const blockedByOthersIds = blockedByOthers.map(block => block.femaleUserId);
-    
+
     // Add block filter to base filter
-    baseFilter._id = { 
-      $nin: [...blockedByCurrentUserIds, ...blockedByOthersIds] 
+    baseFilter._id = {
+      $nin: [...blockedByCurrentUserIds, ...blockedByOthersIds]
     };
-    
+
     let results = [];
     let total = 0;
-    
+
     switch (section.toLowerCase()) {
       case 'all':
         // Get all online females matching base criteria
@@ -1844,7 +1724,7 @@ exports.getDashboard = async (req, res) => {
           FemaleUser.countDocuments(baseFilter)
         ]);
         break;
-        
+
       case 'nearby':
         // Update male user's location with live coordinates from request
         await MaleUser.findByIdAndUpdate(maleUserId, {
@@ -1856,7 +1736,7 @@ exports.getDashboard = async (req, res) => {
         // First get all eligible females with location freshness (TTL check)
         const TTL_MINUTES = 15;
         const cutoffTime = new Date(Date.now() - TTL_MINUTES * 60 * 1000);
-        
+
         // Apply TTL check in MongoDB query for efficiency
         const allEligibleFemales = await FemaleUser.find({
           ...baseFilter,
@@ -1865,26 +1745,26 @@ exports.getDashboard = async (req, res) => {
           .select('_id name age gender bio images onlineStatus hideAge latitude longitude locationUpdatedAt')
           .populate({ path: 'images', select: 'imageUrl' })
           .lean();
-        
+
         // Filter by distance
         const nearbyFemales = allEligibleFemales.filter(female => {
           if (!female.latitude || !female.longitude) {
             return false; // Skip females without location
           }
-          
+
           const distance = calculateDistance(
             location.latitude,  // Use live location from request
             location.longitude,
             female.latitude,
             female.longitude
           );
-          
+
           // Convert admin distance to km if needed
           const adminDistanceInKm = nearbyDistanceUnit === 'm' ? nearbyDistanceValue / 1000 : nearbyDistanceValue;
-          
+
           return distance <= adminDistanceInKm;
         });
-        
+
         // Sort by distance (closest first) and apply pagination
         nearbyFemales.sort((a, b) => {
           const distA = calculateDistance(
@@ -1901,22 +1781,22 @@ exports.getDashboard = async (req, res) => {
           );
           return distA - distB;
         });
-        
+
         total = nearbyFemales.length;
         results = nearbyFemales.slice(skip, skip + limit);
         break;
-        
+
       case 'follow':
         // Get list of females the male is following
         const following = await MaleFollowing.find({ maleUserId }).select('femaleUserId');
         const followingIds = following.map(f => f.femaleUserId);
-        
+
         // Filter base filter to only include followed users
         const followedFilter = {
           ...baseFilter,
           _id: { $in: followingIds }
         };
-        
+
         [results, total] = await Promise.all([
           FemaleUser.find(followedFilter)
             .select('_id name age gender bio images onlineStatus hideAge')
@@ -1927,17 +1807,17 @@ exports.getDashboard = async (req, res) => {
           FemaleUser.countDocuments(followedFilter)
         ]);
         break;
-        
+
       case 'new':
         // Get females who registered recently within the configured window
         const newWindowDate = new Date();
         newWindowDate.setDate(newWindowDate.getDate() - newUserWindowDays);
-        
+
         const newFilter = {
           ...baseFilter,
           createdAt: { $gte: newWindowDate }
         };
-        
+
         [results, total] = await Promise.all([
           FemaleUser.find(newFilter)
             .select('_id name age gender bio images onlineStatus hideAge createdAt')
@@ -1949,14 +1829,14 @@ exports.getDashboard = async (req, res) => {
           FemaleUser.countDocuments(newFilter)
         ]);
         break;
-        
+
       default:
-        return res.status(400).json({ 
-          success: false, 
-          message: "Invalid section. Use 'all', 'nearby', 'follow', or 'new'" 
+        return res.status(400).json({
+          success: false,
+          message: "Invalid section. Use 'all', 'nearby', 'follow', or 'new'"
         });
     }
-    
+
     // Format response data
     const formattedResults = results.map(female => {
       // Apply age visibility based on hideAge setting
@@ -1968,12 +1848,12 @@ exports.getDashboard = async (req, res) => {
         images: female.images && female.images.length > 0 ? [female.images[0]] : [], // Only first image for discovery
         onlineStatus: female.onlineStatus,
       };
-      
+
       // Add age only if not hidden
       if (!female.hideAge) {
         response.age = female.age;
       }
-      
+
       // Add distance for nearby section
       if (section.toLowerCase() === 'nearby' && female.latitude && female.longitude) {
         const distance = calculateDistance(
@@ -1985,15 +1865,15 @@ exports.getDashboard = async (req, res) => {
         response.distance = Math.round(distance * 100) / 100; // Round to 2 decimal places
         response.distanceUnit = 'km';
       }
-      
+
       // Add registration date for new section
       if (section.toLowerCase() === 'new') {
         response.registeredAt = female.createdAt;
       }
-      
+
       return response;
     });
-    
+
     return res.json({
       success: true,
       data: {

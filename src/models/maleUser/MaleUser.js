@@ -35,13 +35,13 @@ const maleUserSchema = new mongoose.Schema({
   relationshipGoals: [{ type: mongoose.Schema.Types.ObjectId, ref: 'RelationGoal' }],
   religion: { type: mongoose.Schema.Types.ObjectId, ref: 'Religion' },
   height: { type: String },
-  searchPreferences: { type: String, enum: ['male', 'female', 'both'], default: 'female' },
+  // searchPreferences: { type: String, enum: ['male', 'female', 'both'], default: 'female' },
   status: { type: String, enum: ['active', 'inactive'], default: 'active' },
   favourites: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FemaleUser' }],
   malefollowing: [{ type: mongoose.Schema.Types.ObjectId, ref: 'MaleFollowing' }],
   malefollowers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'MaleFollowers' }], // Added missing followers array
   images: [{ type: mongoose.Schema.Types.ObjectId, ref: 'MaleImage' }], // Array of image references
-  balance: { type: Number, default: 0 }, // Deprecated: legacy combined balance
+  // balance: { type: Number, default: 0 }, // Deprecated: legacy combined balance
   walletBalance: { type: Number, default: 0 },
   coinBalance: { type: Number, default: 0 },
   isVerified: { type: Boolean, default: false },
